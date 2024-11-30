@@ -1,0 +1,10 @@
+README.md
+setup.py
+farq/__init__.py
+farq/core.py
+farq/visualization.py
+farq.egg-info/PKG-INFO
+farq.egg-info/SOURCES.txt
+farq.egg-info/dependency_links.txt
+farq.egg-info/requires.txt
+farq.egg-info/top_level.txt

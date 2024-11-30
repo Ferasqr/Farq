@@ -1,4 +1,4 @@
-# Farq
+# Farq - فَرْق
 
 A Python library for raster change detection and analysis. Farq simplifies the process of identifying and analyzing changes between raster datasets over time, with a focus on remote sensing applications.
 

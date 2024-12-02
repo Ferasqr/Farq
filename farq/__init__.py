@@ -25,6 +25,11 @@ from .visualization import (
     changes,
     hist
 )
+from .analysis import (
+    water_stats,
+    water_change,
+    get_water_bodies
+)
 
 # Make commonly used functions and modules available at package level
 __version__ = "0.1.0"
@@ -50,6 +55,11 @@ __all__ = [
     'compare',
     'changes',
     'hist',
+    
+    # Analysis functions
+    'water_stats',
+    'water_change',
+    'get_water_bodies',
     
     # Common libraries
     'np',

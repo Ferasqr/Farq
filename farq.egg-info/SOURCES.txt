@@ -1,6 +1,7 @@
 README.md
 setup.py
 farq/__init__.py
+farq/analysis.py
 farq/core.py
 farq/visualization.py
 farq.egg-info/PKG-INFO

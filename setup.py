@@ -14,8 +14,6 @@ setup(
     ],
     author="Feras",
     description="A Python library for raster change detection and analysis",
-    long_description=open("README.md").read(),
-    long_description_content_type="text/markdown",
     url="https://github.com/yourusername/farq",
     classifiers=[
         "Programming Language :: Python :: 3",

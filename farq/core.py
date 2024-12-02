@@ -24,9 +24,22 @@ def _normalize(band1: np.ndarray, band2: np.ndarray) -> np.ndarray:
     """
     Helper function to calculate normalized difference indices.
     """
+    if band1.shape != band2.shape:
+        raise ValueError("Input arrays must have the same shape")
+        
     band1 = band1.astype(float)
     band2 = band2.astype(float)
-    return (band1 - band2) / (band1 + band2 + 1e-10)
+    
+    # Handle NaN values
+    mask = ~(np.isnan(band1) | np.isnan(band2))
+    result = np.zeros_like(band1)
+    
+    # Calculate only for valid values
+    numerator = band1[mask] - band2[mask]
+    denominator = band1[mask] + band2[mask]
+    result[mask] = numerator / (denominator + 1e-10)
+    
+    return result
 
 def ndvi(nir: np.ndarray, red: np.ndarray) -> np.ndarray:
     """

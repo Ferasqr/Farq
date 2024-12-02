@@ -1,6 +1,7 @@
 import numpy as np
 from typing import Dict, Union, Tuple, Optional
 from scipy import ndimage
+from . import sum
 
 def water_stats(water_mask: np.ndarray, 
                pixel_size: Union[float, Tuple[float, float]] = 30.0) -> Dict[str, float]:
@@ -36,7 +37,7 @@ def water_stats(water_mask: np.ndarray,
         pixel_area = (pixel_size * pixel_size) / 1_000_000
     
     # Calculate total water area and coverage
-    total_pixels = np.sum(mask)
+    total_pixels = sum(mask)
     total_area = total_pixels * pixel_area
     coverage = (total_pixels / mask.size) * 100
     
@@ -85,12 +86,12 @@ def water_change(mask1: np.ndarray,
     lost = np.logical_and(mask1, ~mask2)
     
     # Calculate areas
-    gained_area = np.sum(gained) * pixel_area
-    lost_area = np.sum(lost) * pixel_area
+    gained_area = sum(gained) * pixel_area
+    lost_area = sum(lost) * pixel_area
     net_change = gained_area - lost_area
     
     # Calculate percentage change
-    original_area = np.sum(mask1) * pixel_area
+    original_area = sum(mask1) * pixel_area
     if original_area > 0:
         change_percent = (net_change / original_area) * 100
     else:
@@ -148,4 +149,4 @@ def get_water_bodies(water_mask: np.ndarray,
         areas = np.bincount(labeled_mask.ravel())[1:]  # Skip background (0)
         areas_dict = {i: areas[i-1] * pixel_area for i in range(1, num_features + 1)}
     
-    return labeled_mask, areas_dict 
+    return labeled_mask, areas_dict

@@ -32,7 +32,7 @@ A Python library for raster change detection and analysis, specializing in water
 - Single raster visualization
 - Side-by-side raster comparison
 - Change detection visualization
-- Distribution histograms
+- Distribution analysis
 - Customizable colormaps and scaling
 
 ## Installation
@@ -47,22 +47,21 @@ pip install farq
 import farq
 
 # Load raster bands
-green, _ = farq.read("landsat_green.tif")
+green, meta = farq.read("landsat_green.tif")
 nir, _ = farq.read("landsat_nir.tif")
 
 # Calculate NDWI
 ndwi = farq.ndwi(green, nir)
 
-# Create water mask
+# Create water mask and calculate statistics
 water_mask = ndwi > 0
+water_pixels = farq.sum(water_mask)
+water_percentage = (water_pixels / water_mask.size) * 100
 
-# Get water statistics
-stats = farq.water_stats(water_mask, pixel_size=30.0)
-print(f"Total water area: {stats['total_area']:.2f} km²")
-print(f"Water coverage: {stats['coverage_percent']:.1f}%")
+print(f"Water coverage: {water_percentage:.1f}%")
 
 # Visualize results
-farq.plot(ndwi, title="NDWI", cmap="RdYlBu")
+farq.plot(ndwi, title="NDWI Analysis", cmap="RdYlBu", vmin=-1, vmax=1)
 farq.plt.show()
 ```
 
@@ -70,46 +69,57 @@ farq.plt.show()
 
 ### Water Analysis
 ```python
-# Detect water bodies
-water_mask = ndwi > 0
-stats = farq.water_stats(water_mask, pixel_size=30.0)
+# Load and preprocess data
+green_1, meta = farq.read("landsat_green_2020.tif")
+nir_1, _ = farq.read("landsat_nir_2020.tif")
+green_2, _ = farq.read("landsat_green_2024.tif")
+nir_2, _ = farq.read("landsat_nir_2024.tif")
 
-# Analyze changes between two periods
-changes = farq.water_change(mask1, mask2, pixel_size=30.0)
-print(f"Net change: {changes['net_change']:.2f} km²")
+# Calculate NDWI for both periods
+ndwi_1 = farq.ndwi(green_1, nir_1)
+ndwi_2 = farq.ndwi(green_2, nir_2)
 
-# Identify individual water bodies
-labeled, areas = farq.get_water_bodies(water_mask, min_area=9000)
+# Compare water coverage
+farq.compare(ndwi_1, ndwi_2, 
+    title1="NDWI 2020", 
+    title2="NDWI 2024",
+    cmap="RdYlBu",
+    vmin=-1, vmax=1)
+farq.plt.show()
 ```
 
 ### Spectral Indices
 ```python
-# Water indices
-ndwi = farq.ndwi(green, nir)
-mndwi = farq.mndwi(green, swir)
+# Load bands
+bands = {
+    'blue': farq.read("landsat_blue.tif")[0],
+    'green': farq.read("landsat_green.tif")[0],
+    'red': farq.read("landsat_red.tif")[0],
+    'nir': farq.read("landsat_nir.tif")[0]
+}
 
-# Vegetation indices
-ndvi = farq.ndvi(nir, red)
-savi = farq.savi(nir, red, L=0.5)
-evi = farq.evi(nir, red, blue)
+# Calculate indices
+ndvi = farq.ndvi(bands['red'], bands['nir'])
+ndwi = farq.ndwi(bands['green'], bands['nir'])
+evi = farq.evi(bands['red'], bands['nir'], bands['blue'])
 
-# Built-up index
-ndbi = farq.ndbi(swir, nir)
+# Analyze vegetation coverage
+veg_mask = ndvi > 0.2
+veg_percentage = (farq.sum(veg_mask) / veg_mask.size) * 100
+print(f"Vegetation coverage: {veg_percentage:.1f}%")
 ```
 
 ### Visualization
 ```python
-# Single raster
-farq.plot(ndwi, cmap="RdYlBu")
+# Single index visualization
+farq.plot(ndvi, title="NDVI Analysis", cmap="RdYlGn", vmin=-1, vmax=1)
+farq.plt.show()
 
 # Compare two time periods
-farq.compare(mask1, mask2, title1="Before", title2="After")
-
-# Plot changes
-farq.changes(change_data, cmap="RdYlBu")
-
-# Show distribution
-farq.hist(ndwi, bins=50)
+farq.compare(ndwi_1, ndwi_2, 
+    title1="Before", title2="After",
+    cmap="RdYlBu", vmin=-1, vmax=1)
+farq.plt.show()
 ```
 
 ## Documentation
@@ -127,7 +137,7 @@ Farq is optimized for large raster datasets with:
 - Memory-efficient operations
 - Parallel processing capabilities
 - Vectorized computations
-- Benchmark results available in testing documentation
+- Optimized array operations
 
 ## License
 

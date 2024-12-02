@@ -1,133 +1,111 @@
-# Farq API Reference
+# API Reference
 
 ## Core Functions
 
-### read(filepath: str) -> Tuple[np.ndarray, Dict]
-Load a raster file and return its data and metadata.
+### read(filepath: str) -> Tuple[ndarray, Dict]
+Reads a raster file and returns the data array and metadata.
 
-**Parameters:**
-- `filepath`: Path to the raster file
+```python
+data, meta = farq.read("landsat_band.tif")
+```
 
-**Returns:**
-- Tuple containing:
-  - `np.ndarray`: Raster data array
-  - `Dict`: Metadata dictionary
+### resample(data: ndarray, target_shape: Tuple[int, int]) -> ndarray
+Resamples a raster array to match the target shape.
 
-### resample(raster: np.ndarray, shape: Tuple[int, int], method: Resampling = Resampling.bilinear) -> np.ndarray
-Resample a raster array to a target shape.
+```python
+resampled = farq.resample(data, (1000, 1000))
+```
 
-**Parameters:**
-- `raster`: Input raster array
-- `shape`: Target shape (height, width)
-- `method`: Resampling method from rasterio.enums.Resampling
+## Statistical Functions
 
-**Returns:**
-- `np.ndarray`: Resampled raster array
+### min(data: ndarray) -> float
+Returns the minimum value in the array.
+
+### max(data: ndarray) -> float
+Returns the maximum value in the array.
+
+### mean(data: ndarray) -> float
+Returns the mean value of the array.
+
+### std(data: ndarray) -> float
+Returns the standard deviation of the array.
+
+### sum(data: ndarray) -> float
+Returns the sum of all values in the array.
 
 ## Spectral Indices
 
-### ndwi(green: np.ndarray, nir: np.ndarray) -> np.ndarray
-Calculate Normalized Difference Water Index.
+### ndwi(green: ndarray, nir: ndarray) -> ndarray
+Calculates the Normalized Difference Water Index.
 
-**Parameters:**
-- `green`: Green band data
-- `nir`: NIR band data
+```python
+ndwi = farq.ndwi(green, nir)
+```
 
-**Returns:**
-- `np.ndarray`: NDWI values [-1, 1]
+### ndvi(red: ndarray, nir: ndarray) -> ndarray
+Calculates the Normalized Difference Vegetation Index.
 
-### ndvi(nir: np.ndarray, red: np.ndarray) -> np.ndarray
-Calculate Normalized Difference Vegetation Index.
+```python
+ndvi = farq.ndvi(red, nir)
+```
 
-**Parameters:**
-- `nir`: NIR band data
-- `red`: Red band data
+### evi(red: ndarray, nir: ndarray, blue: ndarray) -> ndarray
+Calculates the Enhanced Vegetation Index.
 
-**Returns:**
-- `np.ndarray`: NDVI values [-1, 1]
+```python
+evi = farq.evi(red, nir, blue)
+```
 
-### mndwi(green: np.ndarray, swir: np.ndarray) -> np.ndarray
-Calculate Modified Normalized Difference Water Index.
+### savi(nir: ndarray, red: ndarray, L: float = 0.5) -> ndarray
+Calculates the Soil Adjusted Vegetation Index.
 
-**Parameters:**
-- `green`: Green band data
-- `swir`: SWIR band data
-
-**Returns:**
-- `np.ndarray`: MNDWI values [-1, 1]
-
-### savi(nir: np.ndarray, red: np.ndarray, L: float = 0.5) -> np.ndarray
-Calculate Soil Adjusted Vegetation Index.
-
-**Parameters:**
-- `nir`: NIR band data
-- `red`: Red band data
-- `L`: Soil brightness correction factor
-
-**Returns:**
-- `np.ndarray`: SAVI values [-1.5, 1.5]
-
-## Analysis Functions
-
-### water_stats(water_mask: np.ndarray, pixel_size: Union[float, Tuple[float, float]] = 30.0) -> Dict[str, float]
-Calculate water surface statistics.
-
-**Parameters:**
-- `water_mask`: Binary water mask (True/1 for water)
-- `pixel_size`: Pixel size in meters
-
-**Returns:**
-- Dictionary containing:
-  - `total_area`: Total water surface area (km²)
-  - `coverage_percent`: Percentage of area covered by water
-
-### water_change(mask1: np.ndarray, mask2: np.ndarray, pixel_size: Union[float, Tuple[float, float]] = 30.0) -> Dict[str, float]
-Analyze changes between two water masks.
-
-**Parameters:**
-- `mask1`: First water mask
-- `mask2`: Second water mask
-- `pixel_size`: Pixel size in meters
-
-**Returns:**
-- Dictionary containing:
-  - `gained_area`: New water area (km²)
-  - `lost_area`: Lost water area (km²)
-  - `net_change`: Net change in water area (km²)
-  - `change_percent`: Percentage change
+```python
+savi = farq.savi(nir, red, L=0.5)
+```
 
 ## Visualization Functions
 
-### plot(raster: np.ndarray, **kwargs) -> plt.Figure
-Plot a single raster.
+### plot(data: ndarray, **kwargs) -> None
+Creates a single plot visualization.
 
-**Parameters:**
-- `raster`: Input raster data
-- `title`: Plot title (default: "Raster Data")
-- `cmap`: Colormap (default: "viridis")
-- `vmin`, `vmax`: Value range for colormap
+Parameters:
+- data: Array to visualize
+- title: Plot title (optional)
+- cmap: Colormap name (optional)
+- vmin: Minimum value for colormap (optional)
+- vmax: Maximum value for colormap (optional)
 
-### compare(raster1: np.ndarray, raster2: np.ndarray, **kwargs) -> plt.Figure
-Compare two rasters side by side.
+```python
+farq.plot(ndwi, title="NDWI Analysis", cmap="RdYlBu", vmin=-1, vmax=1)
+farq.plt.show()
+```
 
-**Parameters:**
-- `raster1`, `raster2`: Input rasters
-- `title1`, `title2`: Titles for each plot
-- `cmap`: Colormap
-- `vmin`, `vmax`: Value range for both plots
+### compare(data1: ndarray, data2: ndarray, **kwargs) -> None
+Creates a side-by-side comparison plot.
 
-### changes(data: np.ndarray, **kwargs) -> plt.Figure
-Plot change detection results.
+Parameters:
+- data1: First array to visualize
+- data2: Second array to visualize
+- title1: Title for first plot (optional)
+- title2: Title for second plot (optional)
+- cmap: Colormap name (optional)
+- vmin: Minimum value for colormap (optional)
+- vmax: Maximum value for colormap (optional)
 
-**Parameters:**
-- `data`: Change detection results
-- `title`: Plot title (default: "Changes")
-- `cmap`: Colormap (default: "RdYlBu")
+```python
+farq.compare(ndwi_1, ndwi_2, 
+    title1="NDWI 2020", 
+    title2="NDWI 2024",
+    cmap="RdYlBu",
+    vmin=-1, vmax=1)
+farq.plt.show()
+```
 
-### hist(data: np.ndarray, **kwargs) -> plt.Figure
-Plot histogram of values.
+## Utility Functions
 
-**Parameters:**
-- `data`: Input data
-- `bins`: Number of histogram bins
-- `title`: Plot title 
+### plt
+Access to plotting utilities. Always call `plt.show()` after creating visualizations.
+
+```python
+farq.plt.show()
+``` 

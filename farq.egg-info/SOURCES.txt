@@ -9,3 +9,8 @@ farq.egg-info/SOURCES.txt
 farq.egg-info/dependency_links.txt
 farq.egg-info/requires.txt
 farq.egg-info/top_level.txt
+farq/tests/__init__.py
+farq/tests/test_analysis.py
+farq/tests/test_core.py
+farq/tests/test_performance.py
+farq/tests/test_visualization.py

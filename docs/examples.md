@@ -1,143 +1,130 @@
-# Farq Examples
+# Examples
 
-## Basic Usage
+## Basic Water Detection
 
-### Loading and Visualizing Data
 ```python
 import farq
 
-# Load raster data
-data, meta = farq.read("landsat_band.tif")
-
-# Visualize the data
-farq.plot(data, title="Landsat Band", cmap="viridis")
-farq.plt.show()
-```
-
-### Calculating Water Indices
-
-#### NDWI Calculation
-```python
-# Load required bands
-green, _ = farq.read("LC08_B3.tif")  # Landsat 8 Green band
-nir, _ = farq.read("LC08_B5.tif")    # Landsat 8 NIR band
+# Load bands
+green, meta = farq.read("landsat_green.tif")
+nir, _ = farq.read("landsat_nir.tif")
 
 # Calculate NDWI
 ndwi = farq.ndwi(green, nir)
 
-# Create water mask
+# Create water mask and calculate statistics
 water_mask = ndwi > 0
+water_pixels = farq.sum(water_mask)
+water_percentage = (water_pixels / water_mask.size) * 100
+
+print(f"Water coverage: {water_percentage:.1f}%")
 
 # Visualize results
-farq.plot(ndwi, title="NDWI", cmap="RdYlBu")
+farq.plot(ndwi, title="NDWI Analysis", cmap="RdYlBu", vmin=-1, vmax=1)
 farq.plt.show()
 ```
 
-#### MNDWI Calculation
+## Temporal Change Analysis
+
 ```python
-# Load required bands
-green, _ = farq.read("LC08_B3.tif")   # Green band
-swir, _ = farq.read("LC08_B6.tif")    # SWIR band
+import farq
+import os
 
-# Calculate MNDWI
-mndwi = farq.mndwi(green, swir)
+# Load data for two time periods
+base_dir = "examples/chad_lake"
 
-# Visualize results
-farq.plot(mndwi, title="MNDWI", cmap="RdYlBu")
+# 1985 data
+green_85, _ = farq.read(os.path.join(base_dir, "1985", "LT05_L2SP_185051_19850501_20200918_02_T1_SR_B2.TIF"))
+nir_85, _ = farq.read(os.path.join(base_dir, "1985", "LT05_L2SP_185051_19850501_20200918_02_T1_SR_B4.TIF"))
+
+# 2024 data
+green_24, _ = farq.read(os.path.join(base_dir, "2024", "LC08_L2SP_185051_20230323_20230404_02_T1_SR_B3.TIF"))
+nir_24, _ = farq.read(os.path.join(base_dir, "2024", "LC08_L2SP_185051_20230323_20230404_02_T1_SR_B5.TIF"))
+
+# Resample 2024 data to match 1985 dimensions
+green_24 = farq.resample(green_24, green_85.shape)
+nir_24 = farq.resample(nir_24, nir_85.shape)
+
+# Calculate NDWI for both periods
+ndwi_85 = farq.ndwi(green_85, nir_85)
+ndwi_24 = farq.ndwi(green_24, nir_24)
+
+# Calculate water coverage for each period
+water_mask_85 = ndwi_85 > 0
+water_percentage_85 = (farq.sum(water_mask_85) / water_mask_85.size) * 100
+
+water_mask_24 = ndwi_24 > 0
+water_percentage_24 = (farq.sum(water_mask_24) / water_mask_24.size) * 100
+
+# Print results
+print(f"1985 Water coverage: {water_percentage_85:.2f}%")
+print(f"2024 Water coverage: {water_percentage_24:.2f}%")
+print(f"Change in coverage: {water_percentage_24 - water_percentage_85:.2f}%")
+
+# Visualize comparison
+farq.compare(ndwi_85, ndwi_24,
+    title1="NDWI 1985",
+    title2="NDWI 2024",
+    cmap="RdYlBu",
+    vmin=-1, vmax=1)
 farq.plt.show()
 ```
 
-## Water Analysis
+## Multi-Index Analysis
 
-### Basic Water Statistics
 ```python
-# Create water mask from NDWI
+import farq
+
+# Load all required bands
+bands = {
+    'blue': farq.read("landsat_blue.tif")[0],
+    'green': farq.read("landsat_green.tif")[0],
+    'red': farq.read("landsat_red.tif")[0],
+    'nir': farq.read("landsat_nir.tif")[0]
+}
+
+# Calculate multiple indices
+ndvi = farq.ndvi(bands['red'], bands['nir'])
+ndwi = farq.ndwi(bands['green'], bands['nir'])
+evi = farq.evi(bands['red'], bands['nir'], bands['blue'])
+
+# Calculate coverage statistics
+veg_mask = ndvi > 0.2
+veg_percentage = (farq.sum(veg_mask) / veg_mask.size) * 100
+
 water_mask = ndwi > 0
+water_percentage = (farq.sum(water_mask) / water_mask.size) * 100
 
-# Calculate statistics
-stats = farq.water_stats(water_mask, pixel_size=30.0)
+# Print results
+print(f"Vegetation coverage: {veg_percentage:.1f}%")
+print(f"Water coverage: {water_percentage:.1f}%")
 
-print(f"Total water area: {stats['total_area']:.2f} km²")
-print(f"Water coverage: {stats['coverage_percent']:.1f}%")
-```
+# Visualize indices
+farq.plot(ndvi, title="NDVI Analysis", cmap="RdYlGn", vmin=-1, vmax=1)
+farq.plt.show()
 
-### Water Body Identification
-```python
-# Get individual water bodies
-labeled, areas = farq.get_water_bodies(water_mask, pixel_size=30.0, min_area=9000)
+farq.plot(ndwi, title="NDWI Analysis", cmap="RdYlBu", vmin=-1, vmax=1)
+farq.plt.show()
 
-# Print information about water bodies
-print(f"Number of water bodies: {len(areas)}")
-for id, area in areas.items():
-    print(f"Water body {id}: {area:.2f} km²")
-
-# Visualize water bodies
-farq.plot(labeled, title="Water Bodies", cmap="tab20")
+farq.plot(evi, title="EVI Analysis", cmap="RdYlGn", vmin=-1, vmax=1)
 farq.plt.show()
 ```
 
-## Change Detection
+## Band Statistics
 
-### Basic Change Detection
 ```python
-# Load data from two time periods
-ndwi_1985 = farq.ndwi(green_1985, nir_1985)
-ndwi_2024 = farq.ndwi(green_2024, nir_2024)
+import farq
 
-# Create water masks
-mask_1985 = ndwi_1985 > 0
-mask_2024 = ndwi_2024 > 0
+# Load a band
+data, meta = farq.read("landsat_band.tif")
 
-# Analyze changes
-changes = farq.water_change(mask_1985, mask_2024, pixel_size=30.0)
+# Calculate basic statistics
+print(f"Min: {farq.min(data):.2f}")
+print(f"Max: {farq.max(data):.2f}")
+print(f"Mean: {farq.mean(data):.2f}")
+print(f"Standard deviation: {farq.std(data):.2f}")
 
-print(f"New water area: {changes['gained_area']:.2f} km²")
-print(f"Lost water area: {changes['lost_area']:.2f} km²")
-print(f"Net change: {changes['net_change']:.2f} km²")
-```
-
-### Visualizing Changes
-```python
-# Compare water extent
-farq.compare(
-    mask_1985, mask_2024,
-    title1="Water Extent 1985",
-    title2="Water Extent 2024",
-    cmap="Blues"
-)
+# Visualize the band
+farq.plot(data, title="Band Data", cmap="viridis")
 farq.plt.show()
-
-# Plot change distribution
-farq.hist(changes, bins=50, title="Change Distribution")
-farq.plt.show()
-```
-
-## Advanced Usage
-
-### Custom Visualization
-```python
-# Create custom visualization with multiple indices
-fig, axes = plt.subplots(2, 2, figsize=(15, 15))
-
-farq.plot(ndvi, title="NDVI", cmap="RdYlGn", ax=axes[0,0])
-farq.plot(ndwi, title="NDWI", cmap="RdYlBu", ax=axes[0,1])
-farq.plot(mndwi, title="MNDWI", cmap="RdYlBu", ax=axes[1,0])
-farq.plot(savi, title="SAVI", cmap="RdYlGn", ax=axes[1,1])
-
-plt.tight_layout()
-plt.show()
-```
-
-### Batch Processing
-```python
-import glob
-
-# Process multiple files
-files = glob.glob("landsat/*.tif")
-results = {}
-
-for file in files:
-    data, meta = farq.read(file)
-    stats = farq.water_stats(data > 0)
-    results[file] = stats
 ``` 

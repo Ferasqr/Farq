@@ -1,7 +1,8 @@
-# Farq Documentation
+# Getting Started with Farq
 
 ## Overview
-Farq (فَرْق) is a Python library for raster change detection and analysis, specializing in water body detection and monitoring using satellite imagery.
+
+Farq is a Python library designed for raster change detection and analysis, with a focus on water body monitoring using satellite imagery. The name Farq (Arabic: فَرْق) means "difference", reflecting its primary purpose of analyzing changes in raster data over time.
 
 ## Installation
 
@@ -9,116 +10,99 @@ Farq (فَرْق) is a Python library for raster change detection and analysis, 
 pip install farq
 ```
 
-## Quick Start
+## Basic Usage
+
+Here's a simple example of water detection using NDWI:
 
 ```python
 import farq
 
-# Load raster bands
-green, _ = farq.read("landsat_green.tif")
+# Load bands
+green, meta = farq.read("landsat_green.tif")
 nir, _ = farq.read("landsat_nir.tif")
 
 # Calculate NDWI
 ndwi = farq.ndwi(green, nir)
 
-# Create water mask
+# Calculate water coverage
 water_mask = ndwi > 0
+water_percentage = (farq.sum(water_mask) / water_mask.size) * 100
 
-# Get water statistics
-stats = farq.water_stats(water_mask, pixel_size=30.0)
-print(f"Total water area: {stats['total_area']:.2f} km²")
+print(f"Water coverage: {water_percentage:.1f}%")
+
+# Visualize results
+farq.plot(ndwi, title="NDWI Analysis", cmap="RdYlBu", vmin=-1, vmax=1)
+farq.plt.show()
 ```
 
 ## Core Features
 
-### Spectral Indices
-- `ndwi(green, nir)`: Normalized Difference Water Index
-- `ndvi(nir, red)`: Normalized Difference Vegetation Index
-- `mndwi(green, swir)`: Modified NDWI
-- `ndbi(swir, nir)`: Normalized Difference Built-up Index
-- `savi(nir, red, L=0.5)`: Soil Adjusted Vegetation Index
-- `evi(nir, red, blue)`: Enhanced Vegetation Index
+### Data Loading and Preprocessing
+- Read raster data from various formats
+- Resample rasters to match dimensions
+- Basic statistical operations
 
-### Water Analysis
-- `water_stats()`: Calculate water surface statistics
-- `water_change()`: Analyze changes between two time periods
-- `get_water_bodies()`: Identify and analyze individual water bodies
+### Spectral Indices
+- NDWI (Normalized Difference Water Index)
+- NDVI (Normalized Difference Vegetation Index)
+- EVI (Enhanced Vegetation Index)
+- SAVI (Soil Adjusted Vegetation Index)
 
 ### Visualization
-- `plot()`: Single raster visualization
-- `compare()`: Side-by-side comparison
-- `changes()`: Change detection visualization
-- `hist()`: Distribution histogram
+- Single raster visualization
+- Side-by-side comparison
+- Customizable colormaps and scaling
 
-## Usage Examples
+## Example Applications
 
-### Water Body Detection
+### Water Change Detection
 ```python
-import farq
-
-# Load Landsat 8 bands
-green, _ = farq.read("LC08_B3.tif")  # Green band
-nir, _ = farq.read("LC08_B5.tif")    # NIR band
+# Load data from two periods
+green_1, _ = farq.read("green_2020.tif")
+nir_1, _ = farq.read("nir_2020.tif")
+green_2, _ = farq.read("green_2024.tif")
+nir_2, _ = farq.read("nir_2024.tif")
 
 # Calculate NDWI
-ndwi = farq.ndwi(green, nir)
+ndwi_1 = farq.ndwi(green_1, nir_1)
+ndwi_2 = farq.ndwi(green_2, nir_2)
 
-# Create water mask
-water_mask = ndwi > 0
-
-# Analyze water bodies
-stats = farq.water_stats(water_mask, pixel_size=30.0)
-print(f"Water coverage: {stats['coverage_percent']:.1f}%")
-
-# Visualize results
-farq.plot(ndwi, cmap="RdYlBu", title="NDWI")
+# Compare results
+farq.compare(ndwi_1, ndwi_2,
+    title1="NDWI 2020",
+    title2="NDWI 2024",
+    cmap="RdYlBu",
+    vmin=-1, vmax=1)
 farq.plt.show()
 ```
 
-### Change Detection
+### Vegetation Analysis
 ```python
-# Load data from two time periods
-mask1 = ndwi1 > 0
-mask2 = ndwi2 > 0
+# Calculate vegetation indices
+ndvi = farq.ndvi(red, nir)
+evi = farq.evi(red, nir, blue)
 
-# Analyze changes
-changes = farq.water_change(mask1, mask2, pixel_size=30.0)
-print(f"Net change: {changes['net_change']:.2f} km²")
+# Analyze vegetation coverage
+veg_mask = ndvi > 0.2
+veg_percentage = (farq.sum(veg_mask) / veg_mask.size) * 100
 
-# Visualize changes
-farq.compare(mask1, mask2, 
-            title1="Before", 
-            title2="After",
-            cmap="Blues")
-farq.plt.show()
+print(f"Vegetation coverage: {veg_percentage:.1f}%")
 ```
 
 ## Performance Considerations
-- Optimized for large raster datasets
+
+Farq is optimized for:
 - Memory-efficient operations
+- Vectorized computations
+- Large raster datasets
 - Parallel processing capabilities
-- Benchmark results available in testing documentation
 
-## API Reference
+## Next Steps
 
-### Core Functions
-- `read(filepath)`: Load raster data and metadata
-- `resample(raster, shape)`: Resample raster to new dimensions
+- Check out the [API Reference](api.md) for detailed function documentation
+- See [Examples](examples.md) for more use cases
+- Review [Testing](testing.md) for performance information
 
-### Spectral Indices
-Detailed parameters and return values for each spectral index function.
+## Support
 
-### Analysis Functions
-Complete description of water analysis functionality.
-
-### Visualization Functions
-All available plotting and visualization options.
-
-## Contributing
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-## Testing
-See [testing.md](testing.md) for testing documentation.
-
-## License
-MIT License - see LICENSE file for details. 
+For issues and feature requests, please visit the project's GitHub repository. 

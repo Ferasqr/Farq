@@ -68,6 +68,15 @@ farq.compare(ndwi_85, ndwi_24,
     cmap="RdYlBu",
     vmin=-1, vmax=1)
 farq.plt.show()
+
+# Analyze distribution changes
+farq.distribution_comparison(
+    ndwi_85, ndwi_24,
+    title1="NDWI Distribution 1985",
+    title2="NDWI Distribution 2024",
+    bins=50
+)
+farq.plt.show()
 ```
 
 ## Multi-Index Analysis
@@ -84,9 +93,10 @@ bands = {
 }
 
 # Calculate multiple indices
-ndvi = farq.ndvi(bands['red'], bands['nir'])
+ndvi = farq.ndvi(bands['nir'], bands['red'])
 ndwi = farq.ndwi(bands['green'], bands['nir'])
 evi = farq.evi(bands['red'], bands['nir'], bands['blue'])
+savi = farq.savi(bands['nir'], bands['red'])
 
 # Calculate coverage statistics
 veg_mask = ndvi > 0.2
@@ -108,14 +118,49 @@ farq.plt.show()
 
 farq.plot(evi, title="EVI Analysis", cmap="RdYlGn", vmin=-1, vmax=1)
 farq.plt.show()
+
+farq.plot(savi, title="SAVI Analysis", cmap="RdYlGn", vmin=-1, vmax=1)
+farq.plt.show()
 ```
 
-## Band Statistics
+## RGB Visualization
 
 ```python
 import farq
 
-# Load a band
+# Load RGB bands
+red = farq.read("landsat_red.tif")[0]
+green = farq.read("landsat_green.tif")[0]
+blue = farq.read("landsat_blue.tif")[0]
+
+# Create RGB composite
+farq.plot_rgb(red, green, blue, title="RGB Composite")
+farq.plt.show()
+
+# Compare RGB composites from different dates
+red_2020 = farq.read("landsat_red_2020.tif")[0]
+green_2020 = farq.read("landsat_green_2020.tif")[0]
+blue_2020 = farq.read("landsat_blue_2020.tif")[0]
+
+red_2024 = farq.read("landsat_red_2024.tif")[0]
+green_2024 = farq.read("landsat_green_2024.tif")[0]
+blue_2024 = farq.read("landsat_blue_2024.tif")[0]
+
+farq.compare_rgb(
+    (red_2020, green_2020, blue_2020),
+    (red_2024, green_2024, blue_2024),
+    title1="RGB 2020",
+    title2="RGB 2024"
+)
+farq.plt.show()
+```
+
+## Statistical Analysis
+
+```python
+import farq
+
+# Load data
 data, meta = farq.read("landsat_band.tif")
 
 # Calculate basic statistics
@@ -124,7 +169,17 @@ print(f"Max: {farq.max(data):.2f}")
 print(f"Mean: {farq.mean(data):.2f}")
 print(f"Standard deviation: {farq.std(data):.2f}")
 
-# Visualize the band
-farq.plot(data, title="Band Data", cmap="viridis")
+# Create histogram
+farq.hist(data, title="Band Distribution", bins=50)
 farq.plt.show()
+
+# Analyze water bodies
+ndwi = farq.ndwi(green, nir)
+water_bodies = farq.get_water_bodies(ndwi)
+stats = farq.water_stats(ndwi)
+
+print("\nWater Body Statistics:")
+print(f"Number of water bodies: {stats['num_bodies']}")
+print(f"Total water area: {stats['total_area']:.2f} pixels")
+print(f"Average water body size: {stats['mean_size']:.2f} pixels")
 ``` 

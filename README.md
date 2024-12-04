@@ -9,6 +9,8 @@ A Python library for raster change detection and analysis, specializing in water
 - Change detection using multiple methods
 - Statistical analysis tools
 - Raster resampling and preprocessing
+- Memory-efficient operations
+- Robust error handling
 
 ### Water Analysis
 - Water body detection and delineation
@@ -33,7 +35,9 @@ A Python library for raster change detection and analysis, specializing in water
 - Side-by-side raster comparison
 - Change detection visualization
 - Distribution analysis
+- RGB composite visualization
 - Customizable colormaps and scaling
+- Interactive plotting capabilities
 
 ## Installation
 
@@ -88,7 +92,7 @@ farq.compare(ndwi_1, ndwi_2,
 farq.plt.show()
 ```
 
-### Spectral Indices
+### Vegetation Analysis
 ```python
 # Load bands
 bands = {
@@ -99,26 +103,29 @@ bands = {
 }
 
 # Calculate indices
-ndvi = farq.ndvi(bands['red'], bands['nir'])
-ndwi = farq.ndwi(bands['green'], bands['nir'])
+ndvi = farq.ndvi(bands['nir'], bands['red'])
 evi = farq.evi(bands['red'], bands['nir'], bands['blue'])
+savi = farq.savi(bands['nir'], bands['red'])
 
 # Analyze vegetation coverage
 veg_mask = ndvi > 0.2
 veg_percentage = (farq.sum(veg_mask) / veg_mask.size) * 100
 print(f"Vegetation coverage: {veg_percentage:.1f}%")
-```
 
-### Visualization
-```python
-# Single index visualization
+# Visualize indices
 farq.plot(ndvi, title="NDVI Analysis", cmap="RdYlGn", vmin=-1, vmax=1)
 farq.plt.show()
+```
 
-# Compare two time periods
-farq.compare(ndwi_1, ndwi_2, 
-    title1="Before", title2="After",
-    cmap="RdYlBu", vmin=-1, vmax=1)
+### RGB Visualization
+```python
+# Load RGB bands
+red = farq.read("landsat_red.tif")[0]
+green = farq.read("landsat_green.tif")[0]
+blue = farq.read("landsat_blue.tif")[0]
+
+# Create RGB composite
+farq.plot_rgb(red, green, blue, title="RGB Composite")
 farq.plt.show()
 ```
 
@@ -138,6 +145,12 @@ Farq is optimized for large raster datasets with:
 - Parallel processing capabilities
 - Vectorized computations
 - Optimized array operations
+- Robust error handling
+- Comprehensive input validation
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 

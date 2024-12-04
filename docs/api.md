@@ -19,19 +19,19 @@ resampled = farq.resample(data, (1000, 1000))
 ## Statistical Functions
 
 ### min(data: ndarray) -> float
-Returns the minimum value in the array.
+Returns the minimum value in the array, ignoring NaN values.
 
 ### max(data: ndarray) -> float
-Returns the maximum value in the array.
+Returns the maximum value in the array, ignoring NaN values.
 
 ### mean(data: ndarray) -> float
-Returns the mean value of the array.
+Returns the mean value of the array, ignoring NaN values.
 
 ### std(data: ndarray) -> float
-Returns the standard deviation of the array.
+Returns the standard deviation of the array, ignoring NaN values.
 
 ### sum(data: ndarray) -> float
-Returns the sum of all values in the array.
+Returns the sum of all values in the array, ignoring NaN values.
 
 ## Spectral Indices
 
@@ -42,14 +42,14 @@ Calculates the Normalized Difference Water Index.
 ndwi = farq.ndwi(green, nir)
 ```
 
-### ndvi(red: ndarray, nir: ndarray) -> ndarray
+### ndvi(nir: ndarray, red: ndarray) -> ndarray
 Calculates the Normalized Difference Vegetation Index.
 
 ```python
-ndvi = farq.ndvi(red, nir)
+ndvi = farq.ndvi(nir, red)
 ```
 
-### evi(red: ndarray, nir: ndarray, blue: ndarray) -> ndarray
+### evi(red: ndarray, nir: ndarray, blue: ndarray, G: float = 2.5, C1: float = 6.0, C2: float = 7.5, L: float = 1.0) -> ndarray
 Calculates the Enhanced Vegetation Index.
 
 ```python
@@ -65,7 +65,7 @@ savi = farq.savi(nir, red, L=0.5)
 
 ## Visualization Functions
 
-### plot(data: ndarray, **kwargs) -> None
+### plot(data: ndarray, **kwargs) -> Figure
 Creates a single plot visualization.
 
 Parameters:
@@ -74,13 +74,14 @@ Parameters:
 - cmap: Colormap name (optional)
 - vmin: Minimum value for colormap (optional)
 - vmax: Maximum value for colormap (optional)
+- colorbar_label: Label for colorbar (optional)
 
 ```python
 farq.plot(ndwi, title="NDWI Analysis", cmap="RdYlBu", vmin=-1, vmax=1)
 farq.plt.show()
 ```
 
-### compare(data1: ndarray, data2: ndarray, **kwargs) -> None
+### compare(data1: ndarray, data2: ndarray, **kwargs) -> Figure
 Creates a side-by-side comparison plot.
 
 Parameters:
@@ -91,6 +92,7 @@ Parameters:
 - cmap: Colormap name (optional)
 - vmin: Minimum value for colormap (optional)
 - vmax: Maximum value for colormap (optional)
+- colorbar_label: Label for colorbars (optional)
 
 ```python
 farq.compare(ndwi_1, ndwi_2, 
@@ -101,7 +103,107 @@ farq.compare(ndwi_1, ndwi_2,
 farq.plt.show()
 ```
 
+### plot_rgb(red: ndarray, green: ndarray, blue: ndarray, **kwargs) -> Figure
+Creates an RGB composite visualization.
+
+Parameters:
+- red: Red band array
+- green: Green band array
+- blue: Blue band array
+- title: Plot title (optional)
+- stretch: Contrast stretch method ('linear', 'hist') (optional)
+- percentiles: Tuple of (min, max) percentiles for stretch (optional)
+
+```python
+farq.plot_rgb(red, green, blue, title="RGB Composite")
+farq.plt.show()
+```
+
+### compare_rgb(rgb1: Tuple[ndarray, ndarray, ndarray], rgb2: Tuple[ndarray, ndarray, ndarray], **kwargs) -> Figure
+Creates a side-by-side comparison of RGB composites.
+
+Parameters:
+- rgb1: Tuple of (red, green, blue) arrays for first image
+- rgb2: Tuple of (red, green, blue) arrays for second image
+- title1: Title for first plot (optional)
+- title2: Title for second plot (optional)
+- stretch: Contrast stretch method (optional)
+- percentiles: Tuple of (min, max) percentiles for stretch (optional)
+
+```python
+farq.compare_rgb(
+    (red1, green1, blue1),
+    (red2, green2, blue2),
+    title1="2020",
+    title2="2024"
+)
+farq.plt.show()
+```
+
+### hist(data: ndarray, **kwargs) -> Figure
+Creates a histogram visualization.
+
+Parameters:
+- data: Array to visualize
+- title: Plot title (optional)
+- bins: Number of bins (optional)
+- range: Tuple of (min, max) for bin range (optional)
+- density: Whether to normalize the histogram (optional)
+
+```python
+farq.hist(ndwi, title="NDWI Distribution", bins=50)
+farq.plt.show()
+```
+
+### distribution_comparison(data1: ndarray, data2: ndarray, **kwargs) -> Figure
+Creates a side-by-side comparison of distributions.
+
+Parameters:
+- data1: First array to visualize
+- data2: Second array to visualize
+- title1: Title for first plot (optional)
+- title2: Title for second plot (optional)
+- bins: Number of bins (optional)
+- range: Tuple of (min, max) for bin range (optional)
+- density: Whether to normalize the histograms (optional)
+
+```python
+farq.distribution_comparison(
+    ndwi_1, ndwi_2,
+    title1="NDWI 2020",
+    title2="NDWI 2024",
+    bins=50
+)
+farq.plt.show()
+```
+
+## Analysis Functions
+
+### water_stats(ndwi: ndarray) -> Dict
+Calculates water statistics from NDWI array.
+
+```python
+stats = farq.water_stats(ndwi)
+```
+
+### water_change(ndwi1: ndarray, ndwi2: ndarray) -> Dict
+Analyzes water body changes between two time periods.
+
+```python
+changes = farq.water_change(ndwi_1, ndwi_2)
+```
+
+### get_water_bodies(ndwi: ndarray, threshold: float = 0.0) -> ndarray
+Identifies individual water bodies from NDWI array.
+
+```python
+water_bodies = farq.get_water_bodies(ndwi)
+```
+
 ## Utility Functions
+
+### validate_array(array: ndarray, name: str = "array") -> None
+Validates numpy array inputs for basic operations.
 
 ### plt
 Access to plotting utilities. Always call `plt.show()` after creating visualizations.

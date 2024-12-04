@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="farq",
-    version="0.1.0",
+    version="0.1.2",
     author="Feras",
     author_email="ferasqr@yahoo.com",
     description="A Python library for raster change detection and analysis",
@@ -34,9 +34,16 @@ setup(
     ],
     extras_require={
         'test': [
-            'pytest>=6.0',
-            'pytest-cov>=2.0',
-            'psutil>=5.0',
+            'pytest>=7.0.0',
+            'pytest-cov>=4.0.0',
+            'psutil>=5.0.0',
+        ],
+        'dev': [
+            'black>=22.0.0',
+            'flake8>=4.0.0',
+            'mypy>=0.900',
+            'build>=0.7.0',
+            'twine>=3.4.2',
         ],
     }
 ) 

@@ -4,6 +4,7 @@ Tests for core functionality of the Farq library.
 import numpy as np
 import pytest
 import farq
+from farq.core import ndwi
 
 def test_min():
     """Test minimum value calculation."""
@@ -83,4 +84,22 @@ def test_single_value():
 def test_large_values():
     """Test handling of large values."""
     data = np.array([[1e6, 2e6], [3e6, 4e6]])
-    assert farq.mean(data) == 2.5e6 
+    assert farq.mean(data) == 2.5e6
+
+def test_ndwi_range():
+    """Test that NDWI returns values in [-1, 1] range."""
+    # Create test data
+    green = np.array([100, 1000, 500, 2000], dtype=float)
+    nir = np.array([1000, 100, 500, 2000], dtype=float)
+    
+    result = ndwi(green, nir)
+    
+    # Check range
+    assert np.all(result >= -1.0), "NDWI values below -1.0 found"
+    assert np.all(result <= 1.0), "NDWI values above 1.0 found"
+    
+    # Check specific cases
+    assert np.isclose(result[0], -0.81818182), "Unexpected value for nir >> green"
+    assert np.isclose(result[1], 0.81818182), "Unexpected value for green >> nir"
+    assert np.isclose(result[2], 0.0), "Unexpected value for green == nir"
+    assert np.isclose(result[3], 0.0), "Unexpected value for equal values" 

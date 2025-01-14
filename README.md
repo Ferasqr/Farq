@@ -12,6 +12,14 @@ A Python library for raster change detection and analysis, specializing in water
 - Memory-efficient operations
 - Robust error handling
 
+### Machine Learning
+- Image classification and feature extraction
+- Unsupervised water body detection using clustering
+- Change detection using ML models
+- Model training, saving, and loading
+- Automated parameter optimization
+- Support for multiple clustering algorithms (K-means, DBSCAN)
+
 ### Water Analysis
 - Water body detection and delineation
 - Surface area calculations
@@ -29,6 +37,8 @@ A Python library for raster change detection and analysis, specializing in water
   - EVI (Enhanced Vegetation Index)
 - **Urban Indices:**
   - NDBI (Normalized Difference Built-up Index)
+  - NBR (Normalized Burn Ratio)
+  - NDMI (Normalized Difference Moisture Index)
 
 ### Visualization Tools
 - Single raster visualization
@@ -89,6 +99,58 @@ farq.compare(ndwi_1, ndwi_2,
     title2="NDWI 2024",
     cmap="RdYlBu",
     vmin=-1, vmax=1)
+farq.plt.show()
+```
+
+### Machine Learning Analysis
+```python
+import farq
+
+# Load and preprocess data
+bands = {
+    'blue': farq.read("landsat_blue.tif")[0],
+    'green': farq.read("landsat_green.tif")[0],
+    'nir': farq.read("landsat_nir.tif")[0]
+}
+
+# Extract features
+features = farq.extract_features(bands['nir'], window_size=3)
+
+# Train a classifier
+model, metrics = farq.train_classifier(features, labels, model_type='rf')
+print(f"Model accuracy: {metrics['accuracy']:.2f}")
+
+# Save the model
+farq.save_model(model, "water_classifier.joblib")
+
+# Detect water bodies using clustering
+labels, metadata = farq.cluster_water_bodies(
+    bands['nir'],
+    method='kmeans',
+    n_clusters=2,
+    water_index=farq.ndwi(bands['green'], bands['nir'])
+)
+
+# Analyze water clusters
+stats = farq.analyze_water_clusters(labels, metadata['water_cluster'])
+print(f"Number of water bodies: {stats['num_water_bodies']}")
+print(f"Total water area: {stats['total_water_area']:.2f} km²")
+```
+
+### Change Detection with ML
+```python
+import farq
+
+# Load data from two time periods
+nir_2020 = farq.read("landsat_nir_2020.tif")[0]
+nir_2024 = farq.read("landsat_nir_2024.tif")[0]
+
+# Detect changes using ML
+changes = farq.detect_changes_ml(nir_2020, nir_2024, threshold=0.5)
+
+# Visualize changes
+farq.changes(changes, title="Water Body Changes (2020-2024)",
+            cmap="RdYlBu", symmetric=True)
 farq.plt.show()
 ```
 

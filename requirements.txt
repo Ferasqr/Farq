@@ -2,6 +2,8 @@ numpy>=1.19.0
 matplotlib>=3.3.0
 rasterio>=1.2.0
 scipy>=1.6.0
+scikit-learn>=1.0.0
+joblib>=1.1.0
 
 # Development dependencies
 pytest>=7.0.0

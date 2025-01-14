@@ -13,7 +13,7 @@ All functions include input validation and detailed error messages.
 import matplotlib.pyplot as plt
 import numpy as np
 from typing import Optional, Tuple, Union, List
-from .core import min, max
+from .utils import min, max
 
 def plot(data: np.ndarray, 
          title: str = None,
@@ -21,26 +21,15 @@ def plot(data: np.ndarray,
          figsize: Tuple[int, int] = (10, 8),
          vmin: Optional[float] = None,
          vmax: Optional[float] = None,
-         colorbar_label: str = None) -> plt.Figure:
+         colorbar_label: str = None,
+         reflectance_scale: Optional[float] = None) -> plt.Figure:
     """
     Plot a single raster or array.
-    
-    Args:
-        data: 2D array to plot
-        title: Plot title (optional)
-        cmap: Colormap name (default: "viridis")
-        figsize: Figure size as (width, height)
-        vmin: Minimum value for colormap scaling
-        vmax: Maximum value for colormap scaling
-        colorbar_label: Label for the colorbar (optional)
-    
-    Returns:
-        matplotlib.figure.Figure: The created figure
-        
-    Raises:
-        TypeError: If input is not a numpy array
-        ValueError: If array is empty or not 2D
     """
+    # Close any existing figures to prevent multiple plots
+    plt.close('all')
+    
+    # Input validation
     if not isinstance(data, np.ndarray):
         raise TypeError(f"Input must be a numpy array, got {type(data)}")
     
@@ -49,24 +38,29 @@ def plot(data: np.ndarray,
     if data.ndim != 2:
         raise ValueError(f"Input must be a 2D array, got shape {data.shape}")
     
-    # Create new figure
-    fig = plt.figure(figsize=figsize)
+    # Apply reflectance scaling if provided
+    plot_data = data.copy()
+    if reflectance_scale is not None:
+        plot_data = plot_data / reflectance_scale
+    
+    # Create new figure and axis
+    fig, ax = plt.subplots(figsize=figsize)
     
     # Plot data
-    im = plt.imshow(data, cmap=cmap, vmin=vmin, vmax=vmax)
+    im = ax.imshow(plot_data, cmap=cmap, vmin=vmin, vmax=vmax)
     
     # Add colorbar
     if colorbar_label:
-        plt.colorbar(im, label=colorbar_label)
+        fig.colorbar(im, ax=ax, label=colorbar_label)
     else:
-        plt.colorbar(im)
+        fig.colorbar(im, ax=ax)
     
     # Add title if provided
     if title:
-        plt.title(title)
+        ax.set_title(title)
     
-    plt.axis('off')
-    plt.tight_layout()
+    ax.axis('off')
+    fig.tight_layout()
     
     return fig
 
@@ -78,7 +72,8 @@ def compare(data1: np.ndarray,
             figsize: Tuple[int, int] = (15, 6),
             vmin: Optional[float] = None,
             vmax: Optional[float] = None,
-            colorbar_label: str = None) -> plt.Figure:
+            colorbar_label: str = None,
+            reflectance_scale: Optional[float] = None) -> plt.Figure:
     """
     Compare two rasters or arrays side by side.
     
@@ -92,13 +87,10 @@ def compare(data1: np.ndarray,
         vmin: Minimum value for colormap scaling
         vmax: Maximum value for colormap scaling
         colorbar_label: Label for both colorbars (optional)
+        reflectance_scale: Scale factor for reflectance data (e.g., 10000 for Landsat 8 SR)
     
     Returns:
         matplotlib.figure.Figure: The created figure
-        
-    Raises:
-        TypeError: If inputs are not numpy arrays
-        ValueError: If arrays are empty, not 2D, or have different shapes
     """
     # Convert inputs to numpy arrays
     if not isinstance(data1, np.ndarray):
@@ -114,30 +106,37 @@ def compare(data1: np.ndarray,
     if data1.shape != data2.shape:
         raise ValueError(f"Input arrays must have the same shape: {data1.shape} != {data2.shape}")
     
+    # Apply reflectance scaling if provided
+    plot_data1 = data1.copy()
+    plot_data2 = data2.copy()
+    if reflectance_scale is not None:
+        plot_data1 = plot_data1 / reflectance_scale
+        plot_data2 = plot_data2 / reflectance_scale
+    
     # Create figure and axes
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=figsize)
     
     # Calculate vmin/vmax if not provided
     if vmin is None or vmax is None:
-        vmin = min(data1) if vmin is None else vmin
-        vmax = max(data1) if vmax is None else vmax
+        vmin = min(plot_data1) if vmin is None else vmin
+        vmax = max(plot_data1) if vmax is None else vmax
     
     # Plot first array
-    im1 = ax1.imshow(data1, cmap=cmap, vmin=vmin, vmax=vmax)
+    im1 = ax1.imshow(plot_data1, cmap=cmap, vmin=vmin, vmax=vmax)
     if colorbar_label:
-        plt.colorbar(im1, ax=ax1, label=colorbar_label)
+        fig.colorbar(im1, ax=ax1, label=colorbar_label)
     else:
-        plt.colorbar(im1, ax=ax1)
+        fig.colorbar(im1, ax=ax1)
     if title1:
         ax1.set_title(title1)
     ax1.axis('off')
     
     # Plot second array
-    im2 = ax2.imshow(data2, cmap=cmap, vmin=vmin, vmax=vmax)
+    im2 = ax2.imshow(plot_data2, cmap=cmap, vmin=vmin, vmax=vmax)
     if colorbar_label:
-        plt.colorbar(im2, ax=ax2, label=colorbar_label)
+        fig.colorbar(im2, ax=ax2, label=colorbar_label)
     else:
-        plt.colorbar(im2, ax=ax2)
+        fig.colorbar(im2, ax=ax2)
     if title2:
         ax2.set_title(title2)
     ax2.axis('off')
@@ -152,7 +151,8 @@ def changes(data: np.ndarray,
            vmin: Optional[float] = None,
            vmax: Optional[float] = None,
            symmetric: bool = True,
-           colorbar_label: str = "Change") -> plt.Figure:
+           colorbar_label: str = "Change",
+           reflectance_scale: Optional[float] = None) -> plt.Figure:
     """
     Plot change detection results with optional symmetric scaling.
     
@@ -165,6 +165,7 @@ def changes(data: np.ndarray,
         vmax: Maximum value for colormap scaling
         symmetric: If True, use symmetric scaling around zero
         colorbar_label: Label for the colorbar
+        reflectance_scale: Scale factor for reflectance data (e.g., 10000 for Landsat 8 SR)
     
     Returns:
         matplotlib.figure.Figure: The created figure
@@ -181,22 +182,27 @@ def changes(data: np.ndarray,
     if data.ndim != 2:
         raise ValueError(f"Input must be a 2D array, got shape {data.shape}")
     
-    # Create figure
-    fig = plt.figure(figsize=figsize)
+    # Apply reflectance scaling if provided
+    plot_data = data.copy()
+    if reflectance_scale is not None:
+        plot_data = plot_data / reflectance_scale
+    
+    # Create figure and axis
+    fig, ax = plt.subplots(figsize=figsize)
     
     # Calculate symmetric scaling if needed
     if symmetric and (vmin is None or vmax is None):
-        abs_max = max(np.abs(data))
+        abs_max = max(np.abs(plot_data))
         vmin = -abs_max if vmin is None else vmin
         vmax = abs_max if vmax is None else vmax
     
     # Plot data
-    im = plt.imshow(data, cmap=cmap, vmin=vmin, vmax=vmax)
+    im = ax.imshow(plot_data, cmap=cmap, vmin=vmin, vmax=vmax)
     plt.colorbar(im, label=colorbar_label)
     
     if title:
-        plt.title(title)
-    plt.axis('off')
+        ax.set_title(title)
+    ax.axis('off')
     plt.tight_layout()
     
     return fig
@@ -208,7 +214,8 @@ def hist(data: Union[np.ndarray, List],
          density: bool = True,
          xlabel: str = "Value",
          ylabel: str = None,
-         alpha: float = 0.6) -> plt.Figure:
+         alpha: float = 0.6,
+         reflectance_scale: Optional[float] = None) -> plt.Figure:
     """
     Plot histogram of values with customizable labels.
     
@@ -221,6 +228,7 @@ def hist(data: Union[np.ndarray, List],
         xlabel: Label for x-axis
         ylabel: Label for y-axis (defaults to "Density" or "Count")
         alpha: Transparency of the histogram bars
+        reflectance_scale: Scale factor for reflectance data (e.g., 10000 for Landsat 8 SR)
     
     Returns:
         matplotlib.figure.Figure: The created figure
@@ -235,22 +243,27 @@ def hist(data: Union[np.ndarray, List],
     if data.size == 0:
         raise ValueError("Input array is empty")
     
-    # Flatten array if multidimensional
-    data = data.ravel()
+    # Apply reflectance scaling if provided
+    plot_data = data.copy()
+    if reflectance_scale is not None:
+        plot_data = plot_data / reflectance_scale
     
-    # Create figure
-    fig = plt.figure(figsize=figsize)
+    # Flatten array if multidimensional
+    plot_data = plot_data.ravel()
+    
+    # Create figure and axis
+    fig, ax = plt.subplots(figsize=figsize)
     
     # Plot histogram
-    plt.hist(data, bins=bins, density=density, alpha=alpha)
+    ax.hist(plot_data, bins=bins, density=density, alpha=alpha)
     
     # Add labels and title
     if title:
-        plt.title(title)
-    plt.xlabel(xlabel)
-    plt.ylabel(ylabel if ylabel else ('Density' if density else 'Count'))
+        ax.set_title(title)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel if ylabel else ('Density' if density else 'Count'))
     
-    plt.grid(True, alpha=0.3)
+    ax.grid(True, alpha=0.3)
     plt.tight_layout()
     
     return fig
@@ -264,7 +277,8 @@ def distribution_comparison(data1: Union[np.ndarray, List],
                           density: bool = True,
                           xlabel: str = "Value",
                           ylabel: str = None,
-                          alpha: float = 0.6) -> plt.Figure:
+                          alpha: float = 0.6,
+                          reflectance_scale: Optional[float] = None) -> plt.Figure:
     """
     Compare distributions of two datasets side by side.
     
@@ -279,6 +293,7 @@ def distribution_comparison(data1: Union[np.ndarray, List],
         xlabel: Label for x-axis
         ylabel: Label for y-axis (defaults to "Density" or "Count")
         alpha: Transparency of the histogram bars
+        reflectance_scale: Scale factor for reflectance data (e.g., 10000 for Landsat 8 SR)
     
     Returns:
         matplotlib.figure.Figure: The created figure
@@ -295,15 +310,22 @@ def distribution_comparison(data1: Union[np.ndarray, List],
     if data1.size == 0 or data2.size == 0:
         raise ValueError("Input arrays are empty")
     
+    # Apply reflectance scaling if provided
+    plot_data1 = data1.copy()
+    plot_data2 = data2.copy()
+    if reflectance_scale is not None:
+        plot_data1 = plot_data1 / reflectance_scale
+        plot_data2 = plot_data2 / reflectance_scale
+    
     # Flatten arrays if multidimensional
-    data1 = data1.ravel()
-    data2 = data2.ravel()
+    plot_data1 = plot_data1.ravel()
+    plot_data2 = plot_data2.ravel()
     
     # Create figure and axes
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=figsize)
     
     # Plot first histogram
-    ax1.hist(data1, bins=bins, density=density, alpha=alpha)
+    ax1.hist(plot_data1, bins=bins, density=density, alpha=alpha)
     if title1:
         ax1.set_title(title1)
     ax1.set_xlabel(xlabel)
@@ -311,7 +333,7 @@ def distribution_comparison(data1: Union[np.ndarray, List],
     ax1.grid(True, alpha=0.3)
     
     # Plot second histogram
-    ax2.hist(data2, bins=bins, density=density, alpha=alpha)
+    ax2.hist(plot_data2, bins=bins, density=density, alpha=alpha)
     if title2:
         ax2.set_title(title2)
     ax2.set_xlabel(xlabel)
@@ -328,7 +350,8 @@ def plot_rgb(red: np.ndarray,
             figsize: Tuple[int, int] = (10, 8),
             scale_factor: float = 1.0,
             gamma: float = 1.0,
-            percentile: float = 98.0) -> plt.Figure:
+            percentile: float = 98.0,
+            reflectance_scale: Optional[float] = None) -> plt.Figure:
     """
     Plot RGB composite from three bands with enhancement options.
     
@@ -341,6 +364,7 @@ def plot_rgb(red: np.ndarray,
         scale_factor: Scale factor for brightness adjustment
         gamma: Gamma correction value
         percentile: Percentile for contrast enhancement
+        reflectance_scale: Scale factor for reflectance data (e.g., 10000 for Landsat 8 SR)
         
     Returns:
         matplotlib.figure.Figure: The created figure
@@ -360,6 +384,10 @@ def plot_rgb(red: np.ndarray,
     # Stack bands and convert to float
     rgb = np.dstack((red, green, blue)).astype(float)
     
+    # Apply reflectance scaling if provided
+    if reflectance_scale is not None:
+        rgb = rgb / reflectance_scale
+    
     # Apply scale factor
     rgb *= scale_factor
     
@@ -372,16 +400,16 @@ def plot_rgb(red: np.ndarray,
     if gamma != 1.0:
         rgb = np.power(rgb, 1/gamma)
     
-    # Create figure
-    fig = plt.figure(figsize=figsize)
+    # Create figure and axis
+    fig, ax = plt.subplots(figsize=figsize)
     
     # Plot RGB composite
-    plt.imshow(rgb)
+    ax.imshow(rgb)
     
     if title:
-        plt.title(title)
-    plt.axis('off')
-    plt.tight_layout()
+        ax.set_title(title)
+    ax.axis('off')
+    fig.tight_layout()
     
     return fig
 
@@ -392,7 +420,8 @@ def compare_rgb(rgb1: Tuple[np.ndarray, np.ndarray, np.ndarray],
                 figsize: Tuple[int, int] = (15, 6),
                 scale_factor: float = 1.0,
                 gamma: float = 1.0,
-                percentile: float = 98.0) -> plt.Figure:
+                percentile: float = 98.0,
+                reflectance_scale: Optional[float] = None) -> plt.Figure:
     """
     Compare two RGB composites side by side.
     
@@ -405,6 +434,7 @@ def compare_rgb(rgb1: Tuple[np.ndarray, np.ndarray, np.ndarray],
         scale_factor: Scale factor for brightness adjustment
         gamma: Gamma correction value
         percentile: Percentile for contrast enhancement
+        reflectance_scale: Scale factor for reflectance data (e.g., 10000 for Landsat 8 SR)
         
     Returns:
         matplotlib.figure.Figure: The created figure
@@ -428,7 +458,14 @@ def compare_rgb(rgb1: Tuple[np.ndarray, np.ndarray, np.ndarray],
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=figsize)
     
     # Process and plot first image
-    rgb_stack1 = np.dstack(rgb1).astype(float) * scale_factor
+    rgb_stack1 = np.dstack(rgb1).astype(float)
+    
+    # Apply reflectance scaling if provided
+    if reflectance_scale is not None:
+        rgb_stack1 = rgb_stack1 / reflectance_scale
+    
+    # Apply scale factor and enhancements
+    rgb_stack1 *= scale_factor
     for i in range(3):
         p = np.percentile(rgb_stack1[..., i], percentile)
         rgb_stack1[..., i] = np.clip(rgb_stack1[..., i] / p, 0, 1)
@@ -440,7 +477,14 @@ def compare_rgb(rgb1: Tuple[np.ndarray, np.ndarray, np.ndarray],
     ax1.axis('off')
     
     # Process and plot second image
-    rgb_stack2 = np.dstack(rgb2).astype(float) * scale_factor
+    rgb_stack2 = np.dstack(rgb2).astype(float)
+    
+    # Apply reflectance scaling if provided
+    if reflectance_scale is not None:
+        rgb_stack2 = rgb_stack2 / reflectance_scale
+    
+    # Apply scale factor and enhancements
+    rgb_stack2 *= scale_factor
     for i in range(3):
         p = np.percentile(rgb_stack2[..., i], percentile)
         rgb_stack2[..., i] = np.clip(rgb_stack2[..., i] / p, 0, 1)

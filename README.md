@@ -1,7 +1,8 @@
 # Farq - فَرْق
-<div style="text-align: center;">
+<p align="center">
   <img src="https://github.com/user-attachments/assets/51b7fd5d-2167-4f68-9c74-dae944c4a8f5" alt="1" width="200">
-</div>
+</p>
+
 
 
 

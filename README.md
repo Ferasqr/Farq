@@ -1,5 +1,6 @@
 # Farq - فَرْق
-![1](https://github.com/user-attachments/assets/51b7fd5d-2167-4f68-9c74-dae944c4a8f5)
+<img src="https://github.com/user-attachments/assets/51b7fd5d-2167-4f68-9c74-dae944c4a8f5" alt="1" width="200">
+
 
 A Python library for raster change detection and analysis, specializing in water body detection and monitoring using satellite imagery. Farq (Arabic: فَرْق, meaning "difference") simplifies the process of identifying and analyzing changes between raster datasets over time, with a focus on remote sensing applications.
 

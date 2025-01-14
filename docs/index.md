@@ -41,16 +41,30 @@ farq.plt.show()
 - Read raster data from various formats
 - Resample rasters to match dimensions
 - Basic statistical operations
+- Feature extraction for ML
+
+### Machine Learning
+- Supervised classification for water detection
+- Unsupervised clustering (K-means, DBSCAN)
+- ML-based change detection
+- Model training and persistence
+- Parameter optimization
+- Feature extraction and analysis
 
 ### Spectral Indices
 - NDWI (Normalized Difference Water Index)
 - NDVI (Normalized Difference Vegetation Index)
 - EVI (Enhanced Vegetation Index)
 - SAVI (Soil Adjusted Vegetation Index)
+- NBR (Normalized Burn Ratio)
+- NDMI (Normalized Difference Moisture Index)
 
 ### Visualization
 - Single raster visualization
 - Side-by-side comparison
+- Change detection visualization
+- Distribution analysis
+- RGB composite visualization
 - Customizable colormaps and scaling
 
 ## Example Applications
@@ -87,6 +101,54 @@ veg_mask = ndvi > 0.2
 veg_percentage = (farq.sum(veg_mask) / veg_mask.size) * 100
 
 print(f"Vegetation coverage: {veg_percentage:.1f}%")
+```
+
+### Machine Learning Water Detection
+```python
+import farq
+
+# Load and preprocess data
+nir, _ = farq.read("landsat_nir.tif")
+green, _ = farq.read("landsat_green.tif")
+
+# Calculate water index for reference
+ndwi = farq.ndwi(green, nir)
+
+# Detect water bodies using clustering
+labels, metadata = farq.cluster_water_bodies(
+    nir,
+    method='kmeans',
+    n_clusters=2,
+    water_index=ndwi
+)
+
+# Analyze results
+stats = farq.analyze_water_clusters(labels, metadata['water_cluster'])
+print(f"Number of water bodies: {stats['num_water_bodies']}")
+print(f"Total water area: {stats['total_water_area']:.2f} km²")
+
+# Visualize results
+farq.plot(labels == metadata['water_cluster'], 
+         title="Detected Water Bodies",
+         cmap="Blues")
+farq.plt.show()
+```
+
+### ML-based Change Detection
+```python
+# Load data from two periods
+nir_2020, _ = farq.read("nir_2020.tif")
+nir_2024, _ = farq.read("nir_2024.tif")
+
+# Detect changes using ML
+changes = farq.detect_changes_ml(nir_2020, nir_2024, threshold=0.5)
+
+# Visualize changes
+farq.changes(changes, 
+    title="ML-detected Changes",
+    cmap="RdYlBu",
+    symmetric=True)
+farq.plt.show()
 ```
 
 ## Performance Considerations

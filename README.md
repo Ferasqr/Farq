@@ -195,10 +195,51 @@ farq.plt.show()
 
 Comprehensive documentation is available in the [docs/](docs/) directory:
 
-- [Getting Started](docs/index.md) - Overview and installation
-- [API Reference](docs/api.md) - Detailed function documentation
-- [Examples](docs/examples.md) - Code examples and use cases
-- [Testing](docs/testing.md) - Testing documentation and benchmarks
+- [Getting Started](docs/index.md)
+  - Installation and setup
+  - Basic concepts and terminology
+  - Quick start tutorials
+  - Common workflows
+
+- [API Reference](docs/api.md)
+  - Core functions and utilities
+  - Water analysis functions
+  - Spectral indices
+  - Machine learning APIs
+  - Visualization tools
+  - Error handling and best practices
+
+- [Examples](docs/examples.md)
+  - Basic usage examples
+  - Water body detection and analysis
+  - Change detection workflows
+  - Machine learning tutorials
+  - Clustering and classification
+  - Advanced visualization techniques
+  - Performance optimization tips
+
+- [Machine Learning Guide](docs/ml.md)
+  - Feature extraction and preprocessing
+  - Model training and evaluation
+  - Clustering algorithms
+  - Change detection with ML
+  - Model persistence
+  - Parameter optimization
+  - Best practices and tips
+
+- [Testing](docs/testing.md)
+  - Unit tests and coverage
+  - Integration tests
+  - Performance benchmarks
+  - Memory usage analysis
+  - Test data and fixtures
+
+- [Contributing](docs/contributing.md)
+  - Development setup
+  - Code style guide
+  - Pull request workflow
+  - Testing guidelines
+  - Documentation standards
 
 ## Performance
 

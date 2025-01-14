@@ -210,4 +210,72 @@ Access to plotting utilities. Always call `plt.show()` after creating visualizat
 
 ```python
 farq.plt.show()
+```
+
+## Machine Learning Functions
+
+### extract_features(raster_data: ndarray, indices: Optional[List[str]] = None, window_size: int = 3) -> ndarray
+Extracts features from raster data for ML analysis.
+
+```python
+features = farq.extract_features(nir_band, window_size=3)
+```
+
+### train_classifier(features: ndarray, labels: ndarray, model_type: str = 'rf', test_size: float = 0.2, random_state: int = 42, **model_params) -> Tuple[object, Dict]
+Trains a classifier for water detection.
+
+```python
+model, metrics = farq.train_classifier(features, labels, model_type='rf')
+print(f"Accuracy: {metrics['accuracy']}")
+```
+
+### detect_changes_ml(raster1: ndarray, raster2: ndarray, model: Optional[object] = None, threshold: float = 0.5) -> ndarray
+Detects changes between two rasters using ML.
+
+```python
+changes = farq.detect_changes_ml(nir_2020, nir_2024, threshold=0.5)
+```
+
+### cluster_water_bodies(raster_data: ndarray, method: str = 'kmeans', n_clusters: int = 2, water_index: Optional[ndarray] = None, **kwargs) -> Tuple[ndarray, Dict]
+Performs unsupervised clustering for water body detection.
+
+```python
+labels, metadata = farq.cluster_water_bodies(
+    nir_band,
+    method='kmeans',
+    n_clusters=2,
+    water_index=ndwi
+)
+```
+
+### analyze_water_clusters(cluster_labels: ndarray, water_cluster: int, pixel_size: Union[float, Tuple[float, float]] = 30.0) -> Dict
+Analyzes water bodies identified through clustering.
+
+```python
+stats = farq.analyze_water_clusters(labels, metadata['water_cluster'])
+```
+
+### optimize_clustering(raster_data: ndarray, water_index: Optional[ndarray] = None, method: str = 'kmeans', param_grid: Optional[Dict] = None) -> Tuple[Dict, Dict]
+Optimizes clustering parameters for water body detection.
+
+```python
+best_params, results = farq.optimize_clustering(
+    nir_band,
+    water_index=ndwi,
+    method='kmeans'
+)
+```
+
+### save_model(model: object, filepath: Union[str, Path], metadata: Optional[Dict] = None) -> None
+Saves a trained model to file.
+
+```python
+farq.save_model(model, "water_classifier.joblib", metadata={'date': '2024-03-20'})
+```
+
+### load_model(filepath: Union[str, Path]) -> Tuple[object, Dict]
+Loads a trained model from file.
+
+```python
+model, metadata = farq.load_model("water_classifier.joblib")
 ``` 

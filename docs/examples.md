@@ -182,4 +182,155 @@ print("\nWater Body Statistics:")
 print(f"Number of water bodies: {stats['num_bodies']}")
 print(f"Total water area: {stats['total_area']:.2f} pixels")
 print(f"Average water body size: {stats['mean_size']:.2f} pixels")
+```
+
+## Machine Learning Analysis
+
+### Water Body Detection with Clustering
+
+```python
+import farq
+import numpy as np
+
+# Load data
+nir, _ = farq.read("landsat_nir.tif")
+green, _ = farq.read("landsat_green.tif")
+
+# Calculate water index for reference
+ndwi = farq.ndwi(green, nir)
+
+# Extract features
+features = farq.extract_features(nir, window_size=3)
+
+# Perform clustering
+labels, metadata = farq.cluster_water_bodies(
+    nir,
+    method='kmeans',
+    n_clusters=2,
+    water_index=ndwi
+)
+
+# Analyze clusters
+stats = farq.analyze_water_clusters(labels, metadata['water_cluster'])
+
+print("\nWater Body Statistics:")
+print(f"Number of water bodies: {stats['num_water_bodies']}")
+print(f"Total water area: {stats['total_water_area']:.2f} km²")
+print(f"Mean water body size: {stats['mean_water_body_area']:.2f} km²")
+
+# Visualize results
+farq.plot(labels == metadata['water_cluster'], 
+         title="Detected Water Bodies",
+         cmap="Blues")
+farq.plt.show()
+```
+
+### Training a Water Classifier
+
+```python
+import farq
+import numpy as np
+from sklearn.model_selection import train_test_split
+
+# Load training data
+nir, _ = farq.read("training_nir.tif")
+green, _ = farq.read("training_green.tif")
+labels = farq.read("water_labels.tif")[0]  # Ground truth water mask
+
+# Extract features
+features = farq.extract_features(nir, window_size=3)
+
+# Train classifier
+model, metrics = farq.train_classifier(
+    features.reshape(-1, features.shape[-1]),
+    labels.ravel(),
+    model_type='rf',
+    test_size=0.2
+)
+
+print("\nModel Performance:")
+print(f"Accuracy: {metrics['accuracy']:.3f}")
+print("\nClassification Report:")
+print(metrics['classification_report'])
+
+# Save the model
+farq.save_model(model, "water_classifier.joblib", 
+                metadata={'training_date': '2024-03-20'})
+```
+
+### ML-based Change Detection
+
+```python
+import farq
+
+# Load data from two time periods
+nir_2020, _ = farq.read("landsat_nir_2020.tif")
+nir_2024, _ = farq.read("landsat_nir_2024.tif")
+
+# Load trained model (optional)
+model, _ = farq.load_model("water_classifier.joblib")
+
+# Detect changes
+changes = farq.detect_changes_ml(
+    nir_2020, 
+    nir_2024,
+    model=model,  # Optional: use trained model
+    threshold=0.5
+)
+
+# Visualize changes
+farq.changes(changes, 
+    title="ML-detected Changes (2020-2024)",
+    cmap="RdYlBu",
+    symmetric=True)
+farq.plt.show()
+
+# Calculate change statistics
+change_pixels = np.sum(changes)
+change_percentage = (change_pixels / changes.size) * 100
+print(f"Changed area: {change_percentage:.2f}%")
+```
+
+### Optimizing Clustering Parameters
+
+```python
+import farq
+
+# Load data
+nir, _ = farq.read("landsat_nir.tif")
+green, _ = farq.read("landsat_green.tif")
+ndwi = farq.ndwi(green, nir)
+
+# Define parameter grid
+param_grid = {
+    'n_clusters': [2, 3, 4],
+    'eps': [0.1, 0.2, 0.3],  # For DBSCAN
+    'min_samples': [5, 10, 15]  # For DBSCAN
+}
+
+# Optimize clustering
+best_params, results = farq.optimize_clustering(
+    nir,
+    water_index=ndwi,
+    method='dbscan',
+    param_grid=param_grid
+)
+
+print("\nBest Parameters:")
+for param, value in best_params.items():
+    print(f"{param}: {value}")
+
+# Apply best parameters
+labels, metadata = farq.cluster_water_bodies(
+    nir,
+    method='dbscan',
+    water_index=ndwi,
+    **best_params
+)
+
+# Visualize results
+farq.plot(labels == metadata['water_cluster'],
+         title="Optimized Water Body Detection",
+         cmap="Blues")
+farq.plt.show()
 ``` 

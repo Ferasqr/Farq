@@ -598,3 +598,47 @@ def test_detect_changes_is_deterministic(scene):
 def test_public_api():
     for name in ch.__all__:
         assert hasattr(ch, name), name
+
+
+class TestDetectChangesIRMADAndNormalize:
+    @staticmethod
+    def _pair(bands=3, seed=0):
+        rng = np.random.default_rng(seed)
+        before = rng.normal(0.3, 0.05, (bands, 120, 120))
+        # Different illumination/gain on the second date, plus a real change block.
+        after = 1.6 * before + 0.1 + rng.normal(0, 0.01, before.shape)
+        after[:, 20:40, 20:40] += 0.5
+        truth = np.zeros((120, 120), bool)
+        truth[20:40, 20:40] = True
+        return before, after, truth
+
+    def test_irmad_ignores_gain_and_finds_change(self):
+        before, after, truth = self._pair()
+        res = ch.detect_changes(before, after, method="irmad", alpha=0.01)
+        assert res.method == "irmad"
+        assert res.mask[truth].mean() > 0.99
+        assert res.mask[~truth].mean() < 0.03
+
+    def test_irmad_rejects_threshold_and_bad_alpha(self):
+        before, after, _ = self._pair()
+        with pytest.raises(ValueError, match="alpha"):
+            ch.detect_changes(before, after, method="irmad", threshold=0.5)
+        with pytest.raises(ValueError, match="alpha"):
+            ch.detect_changes(before, after, method="irmad", alpha=1.0)
+
+    @pytest.mark.parametrize("normalize", ["histogram", "pif"])
+    def test_normalize_removes_brightness_change(self, normalize):
+        before, after, truth = self._pair(bands=1)
+        plain = ch.detect_changes(before[0], after[0], threshold=0.2)
+        assert plain.mask[~truth].mean() > 0.9  # the gain alone looks like change
+        res = ch.detect_changes(before[0], after[0], threshold=0.2, normalize=normalize)
+        assert res.mask[~truth].mean() < 0.02
+        if normalize == "pif":
+            # Fitted on invariant pixels only, so the real change survives.
+            assert res.mask[truth].mean() > 0.9
+        # Histogram matching maps the changed pixels onto the reference's brightest
+        # values and attenuates them: the documented reason to prefer "pif".
+
+    def test_unknown_normalize(self):
+        with pytest.raises(ValueError, match="normalize"):
+            ch.detect_changes(np.ones((5, 5)), np.ones((5, 5)), normalize="magic")

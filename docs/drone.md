@@ -229,3 +229,15 @@ farq.write("exg_change_mask.tif", mask, meta, dtype="uint8", nodata=None)
 - **Align coarser**: pass `resolution=` to `align_pair`. Change detection at 2-3× the
   native pixel size is usually more robust anyway.
 - **Co-register on a crop** (see above), then apply the shift to the full array.
+- **Process out of core.** Once the flights are on one grid on disk, `farq.index_file`,
+  `farq.detect_changes_file` and `farq.map_blocks` work block by block, so memory does
+  not depend on the mosaic size. See the [tiling guide](tiling.md).
+
+## Related guides
+
+- [Radiometric normalization](radiometry.md): every flight has its own exposure and
+  white balance. `farq.detect_changes(..., normalize="pif")` or `farq.pif_normalize`
+  removes these differences before change is measured.
+- [Elevation change and volumes](elevation.md): DSM differencing, cut/fill and stockpile
+  volumes from the same photogrammetry surveys.
+- [Vector export](vector.md): write the change regions as polygons for GIS.

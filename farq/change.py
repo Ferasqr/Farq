@@ -36,7 +36,6 @@ Conventions
 
 from __future__ import annotations
 
-import warnings
 from collections.abc import Mapping
 from typing import Any, NamedTuple
 
@@ -362,13 +361,21 @@ def _pixel_area(pixel_size: Any) -> float | None:
                 + "), so pixel areas are unknown. Rectify/align the raster first "
                 "(farq.georef.rectify / align_pair) or pass the pixel size explicitly."
             )
-        if crs is not None and getattr(crs, "is_geographic", False):
-            warnings.warn(
-                "The raster uses a geographic CRS (degrees); areas are in squared degrees, "
-                "not m². Reproject to a projected CRS for meaningful areas.",
-                UserWarning,
-                stacklevel=3,
-            )
+        if crs is not None:
+            from rasterio.crs import CRS
+            from rasterio.errors import CRSError
+
+            try:
+                crs = CRS.from_user_input(crs)
+            except CRSError as exc:
+                raise ValueError(f"pixel_size metadata has an invalid CRS: {crs!r}") from exc
+            if crs.is_geographic:
+                raise ValueError(
+                    f"The raster uses a geographic CRS ({crs.to_string()}, degrees), so pixel "
+                    "areas would be in squared degrees, not m². Reproject to a projected CRS "
+                    "(e.g. UTM with farq.align_pair(..., dst_crs=...)) or pass the pixel "
+                    "size in metres explicitly."
+                )
         return _pixel_area(pixel_size["transform"])
     if all(hasattr(pixel_size, attr) for attr in ("a", "b", "d", "e")):  # affine.Affine
         t = pixel_size
@@ -1139,8 +1146,8 @@ def change_summary(
         Pixel footprint, used for areas. One of: a number (square pixels), an
         ``(x, y)`` pair, an ``affine.Affine`` transform, a rasterio
         ``meta``/``profile`` dict or an open rasterio dataset. Areas are in squared
-        CRS units — m² for projected CRSs such as UTM (a warning is raised when a
-        rasterio meta/dataset reports a geographic CRS).
+        CRS units — m² for projected CRSs such as UTM. A rasterio meta/dataset with a
+        geographic CRS raises ``ValueError``.
     labels : mapping, optional
         Names for class values, e.g. :data:`CHANGE_LABELS`. Labelled classes
         appear even with zero pixels. Boolean masks default to

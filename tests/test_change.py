@@ -413,10 +413,26 @@ def test_pixel_size_forms(pixel_size, area):
     assert s["changed_area_m2"] == pytest.approx(4 * area)
 
 
-def test_pixel_size_geographic_warns_and_bad_values():
-    meta = {"transform": from_origin(0, 0, 0.001, 0.001), "crs": CRS.from_epsg(4326)}
-    with pytest.warns(UserWarning, match="geographic"):
+@pytest.mark.parametrize("crs", [CRS.from_epsg(4326), "EPSG:4326", 4326, "OGC:CRS84"])
+def test_pixel_size_geographic_crs_rejected(crs):
+    """Any spelling of a geographic CRS is refused: areas would be in degrees²."""
+    meta = {"transform": from_origin(0, 0, 0.001, 0.001), "crs": crs}
+    with pytest.raises(ValueError, match="geographic"):
         ch.change_summary(np.ones((2, 2), bool), pixel_size=meta)
+
+
+@pytest.mark.parametrize("crs", ["EPSG:32633", 32633, CRS.from_epsg(32633)])
+def test_pixel_size_projected_crs_spellings(crs):
+    meta = {"transform": from_origin(0, 0, 10, 10), "crs": crs}
+    assert ch.change_summary(np.ones((2, 2), bool), pixel_size=meta)["changed_area_m2"] == 400
+
+
+def test_pixel_size_bad_values():
+    with pytest.raises(ValueError, match="invalid CRS"):
+        ch.change_summary(
+            np.ones((2, 2), bool),
+            pixel_size={"transform": from_origin(0, 0, 1, 1), "crs": "not-a-crs"},
+        )
     with pytest.raises(ValueError):
         ch.change_summary(np.ones((2, 2), bool), pixel_size=0)
     with pytest.raises(ValueError, match="transform"):

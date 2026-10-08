@@ -105,8 +105,8 @@ present after.
 ### Units
 
 - `change_summary`, `ChangeResult.summary` and `TransitionMatrix.areas` report areas in
-  squared CRS units (m² for projected CRSs such as UTM), plus km². Farq warns if the CRS
-  is geographic (degrees).
+  m² and km² for projected CRSs such as UTM. Metadata in a geographic CRS (degrees) is
+  refused with a `ValueError`; reproject first or pass the pixel size in metres.
 - `farq.analysis` takes `pixel_size` in metres and returns **areas in km²** and per-body
   **perimeters in km**.
 - `farq.ml.analyze_water_clusters` returns **areas in m² and perimeters in m**. These

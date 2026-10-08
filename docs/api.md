@@ -320,8 +320,9 @@ Pixel counts, percentages and areas for a boolean mask or a class map.
 
 - `pixel_size` can be a number (square pixels), an `(x, y)` pair, an `affine.Affine`, a
   rasterio meta/profile dict with a real geotransform (such as the metadata returned by
-  `align_pair`), or an open rasterio dataset. A warning is raised when the metadata
-  reports a geographic CRS. Metadata without a geotransform (GCP-only, or no CRS and an
+  `align_pair`), or an open rasterio dataset. Metadata with a geographic CRS (in any
+  spelling: a `CRS`, `"EPSG:4326"` or `4326`) raises `ValueError`, since areas would be in
+  squared degrees. Metadata without a geotransform (GCP-only, or no CRS and an
   identity transform) raises `ValueError` instead of silently reporting 1 unit² per
   pixel. Rectify or align the raster first, or pass the pixel size explicitly.
 - Returns `total_pixels`, `valid_pixels`, `nodata_pixels`, `pixel_area_m2` (`None` if no

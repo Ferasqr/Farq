@@ -1,8 +1,9 @@
-# Getting Started with Farq
+# Getting started with Farq
 
-## Overview
-
-Farq is a Python library designed for raster change detection and analysis, with a focus on water body monitoring using satellite imagery. The name Farq (Arabic: فَرْق) means "difference", reflecting its primary purpose of analyzing changes in raster data over time.
+Farq (Arabic فَرْق, "difference") detects and measures change between rasters of the
+same area acquired at different times. It works with multispectral satellite imagery
+(Landsat, Sentinel-2 and similar) and with RGB drone orthomosaics, including those
+georeferenced only by ground control points.
 
 ## Installation
 
@@ -10,161 +11,131 @@ Farq is a Python library designed for raster change detection and analysis, with
 pip install farq
 ```
 
-## Basic Usage
+Python 3.9 or newer is required. The dependencies are NumPy, SciPy, rasterio (which
+bundles GDAL in its wheels), scikit-learn, joblib and matplotlib.
 
-Here's a simple example of water detection using NDWI:
+For development (tests, linting, building):
+
+```bash
+pip install -e ".[dev]"
+```
+
+## A first example
 
 ```python
+import numpy as np
 import farq
 
-# Load bands
-green, meta = farq.read("landsat_green.tif")
-nir, _ = farq.read("landsat_nir.tif")
+green, meta = farq.read("green_2024.tif", masked=True)  # nodata -> NaN
+nir, _ = farq.read("nir_2024.tif", masked=True)
 
-# Calculate NDWI
-ndwi = farq.ndwi(green, nir)
+ndwi = farq.ndwi(green, nir)  # (green - nir) / (green + nir); water > 0
+water = ndwi > 0
+print(f"Water: {farq.mean(np.where(np.isfinite(ndwi), water, np.nan)) * 100:.1f}% of valid pixels")
 
-# Calculate water coverage
-water_mask = ndwi > 0
-water_percentage = (farq.sum(water_mask) / water_mask.size) * 100
-
-print(f"Water coverage: {water_percentage:.1f}%")
-
-# Visualize results
-farq.plot(ndwi, title="NDWI Analysis", cmap="RdYlBu", vmin=-1, vmax=1)
-farq.plt.show()
+fig = farq.plot(ndwi, title="NDWI", cmap="RdYlBu", vmin=-1, vmax=1, colorbar_label="NDWI")
+fig.savefig("ndwi.png")
 ```
 
-## Core Features
+For a full change-detection workflow see the
+[README](https://github.com/ferasqr/farq#readme), the
+[change detection guide](change_detection.md) and the [drone guide](drone.md).
 
-### Data Loading and Preprocessing
-- Read raster data from various formats
-- Resample rasters to match dimensions
-- Basic statistical operations
-- Feature extraction for ML
+## Package layout
 
-### Machine Learning
-- Supervised classification for water detection
-- Unsupervised clustering (K-means, DBSCAN)
-- ML-based change detection
-- Model training and persistence
-- Parameter optimization
-- Feature extraction and analysis
+Every public name is available directly as `farq.<name>`. Submodules load lazily on
+first use, so `import farq` is fast. matplotlib, scikit-learn and rasterio load only when
+you first need them.
 
-### Spectral Indices
-- NDWI (Normalized Difference Water Index)
-- NDVI (Normalized Difference Vegetation Index)
-- EVI (Enhanced Vegetation Index)
-- SAVI (Soil Adjusted Vegetation Index)
-- NBR (Normalized Burn Ratio)
-- NDMI (Normalized Difference Moisture Index)
+| Module | Purpose |
+| --- | --- |
+| `farq.core` | `read`, `write`, `resample`, `validate_bands` |
+| `farq.indices` | NDWI, MNDWI, NDVI, EVI, SAVI, NDBI, NBR, NDMI and the RGB indices VARI, ExG, ExR, ExGR, GLI, NGRDI, TGI |
+| `farq.change` | `detect_changes`, change measures, thresholds, `clean_mask`, `classify_change`, `transition_matrix`, `change_summary` |
+| `farq.georef` | GCPs, `georeference`/`rectify`, `align`/`align_pair`, `coregister`/`apply_shift`, `pixel_size`/`pixel_area` |
+| `farq.analysis` | `water_stats`, `water_change`, `get_water_bodies`, `calculate_shape_metrics` |
+| `farq.ml` | features, random-forest classifier, model persistence, clustering |
+| `farq.visualization` | `plot`, `compare`, `changes`, `hist`, `distribution_comparison`, `plot_rgb`, `compare_rgb` |
+| `farq.utils` | NaN-aware statistics: `stats`, `mean`, `median`, `percentile`, ... |
 
-### Visualization
-- Single raster visualization
-- Side-by-side comparison
-- Change detection visualization
-- Distribution analysis
-- RGB composite visualization
-- Customizable colormaps and scaling
+The complete list with signatures is in the [API reference](api.md).
 
-## Example Applications
+## Conventions
 
-### Water Change Detection
-```python
-# Load data from two periods
-green_1, _ = farq.read("green_2020.tif")
-nir_1, _ = farq.read("nir_2020.tif")
-green_2, _ = farq.read("green_2024.tif")
-nir_2, _ = farq.read("nir_2024.tif")
+These conventions apply across the library. The [API reference](api.md) lists the
+exceptions.
 
-# Calculate NDWI
-ndwi_1 = farq.ndwi(green_1, nir_1)
-ndwi_2 = farq.ndwi(green_2, nir_2)
+### Arrays and metadata
 
-# Compare results
-farq.compare(ndwi_1, ndwi_2,
-    title1="NDWI 2020",
-    title2="NDWI 2024",
-    cmap="RdYlBu",
-    vmin=-1, vmax=1)
-farq.plt.show()
-```
+- **Raster stacks are `(bands, rows, cols)`**, the rasterio layout, in `core`, `change`,
+  `georef` and `visualization`. `farq.read(path, band=None)` returns this layout.
+- **`farq.ml` uses `(rows, cols, bands)`** (scikit-learn style, one row per pixel).
+  Convert with `np.moveaxis(stack, 0, -1)`.
+- **Metadata** is a plain dict in rasterio's profile format (`crs`, `transform`, `width`,
+  `height`, `count`, `dtype`, `nodata`, `driver`). A raster georeferenced only by ground
+  control points also has `gcps` and `gcps_crs`. `farq.read` returns this dict,
+  `farq.write` accepts it, and the georef functions return it for their outputs.
 
-### Vegetation Analysis
-```python
-# Calculate vegetation indices
-ndvi = farq.ndvi(red, nir)
-evi = farq.evi(red, nir, blue)
+### Nodata
 
-# Analyze vegetation coverage
-veg_mask = ndvi > 0.2
-veg_percentage = (farq.sum(veg_mask) / veg_mask.size) * 100
+- **NaN is nodata.** `farq.read(..., masked=True)` converts nodata pixels (nodata value,
+  alpha band or internal mask) to NaN. Indices, change measures, statistics and plots
+  propagate or ignore NaN.
+- Invalid pixels are never counted as change (`ChangeResult.mask` is `False` there) and
+  never counted as water. Float water masks may hold NaN to mark unknown pixels.
+- Undefined arithmetic gives NaN, never 0. For example, an index whose denominator is
+  zero is NaN, and the log-ratio of zero is NaN.
+- `farq.write` stores NaN as the file's nodata value. A float product written with the
+  metadata of integer imagery gets NaN as nodata, so valid zeros stay valid.
 
-print(f"Vegetation coverage: {veg_percentage:.1f}%")
-```
+### Change direction
 
-### Machine Learning Water Detection
-```python
-import farq
+Change is always measured as **after relative to before**: `difference = after - before`,
+`ratio = ln(after / before)`, and `classify_change` codes *gained* = absent before and
+present after.
 
-# Load and preprocess data
-nir, _ = farq.read("landsat_nir.tif")
-green, _ = farq.read("landsat_green.tif")
+### Indices
 
-# Calculate water index for reference
-ndwi = farq.ndwi(green, nir)
+- **NDWI uses McFeeters (1996): `(green - nir) / (green + nir)`, so open water is
+  > 0.** MNDWI (green, SWIR1) also gives water > 0.
+- Index inputs are converted to float (`float32` when lossless, e.g. for `uint8` or
+  `uint16`), so integer bands never overflow. Normalized indices are clipped to `[-1, 1]`
+  by default (`clip=True`).
 
-# Detect water bodies using clustering
-labels, metadata = farq.cluster_water_bodies(
-    nir,
-    method='kmeans',
-    n_clusters=2,
-    water_index=ndwi
-)
+### Units
 
-# Analyze results
-stats = farq.analyze_water_clusters(labels, metadata['water_cluster'])
-print(f"Number of water bodies: {stats['num_water_bodies']}")
-print(f"Total water area: {stats['total_water_area']:.2f} km²")
+- `change_summary`, `ChangeResult.summary` and `TransitionMatrix.areas` report areas in
+  squared CRS units (m² for projected CRSs such as UTM), plus km². Farq warns if the CRS
+  is geographic (degrees).
+- `farq.analysis` takes `pixel_size` in metres and returns **areas in km²** and per-body
+  **perimeters in km**.
+- `farq.ml.analyze_water_clusters` returns **areas in m² and perimeters in m**. These
+  units are kept for backward compatibility.
+- `farq.pixel_size(meta)` returns the pixel size in CRS units, and `farq.pixel_area(meta)`
+  returns the pixel area. `pixel_area` refuses geographic CRSs.
 
-# Visualize results
-farq.plot(labels == metadata['water_cluster'], 
-         title="Detected Water Bodies",
-         cmap="Blues")
-farq.plt.show()
-```
+### Georeferencing
 
-### ML-based Change Detection
-```python
-# Load data from two periods
-nir_2020, _ = farq.read("nir_2020.tif")
-nir_2024, _ = farq.read("nir_2024.tif")
+- GCP pixel coordinates follow GDAL: `(row, col) = (0, 0)` is the **top-left corner** of
+  the top-left pixel, so the centre of that pixel is `(0.5, 0.5)`.
+- `coregister` estimates **translation only**. It does not model rotation, scale or local
+  distortion.
 
-# Detect changes using ML
-changes = farq.detect_changes_ml(nir_2020, nir_2024, threshold=0.5)
+### Plotting
 
-# Visualize changes
-farq.changes(changes, 
-    title="ML-detected Changes",
-    cmap="RdYlBu",
-    symmetric=True)
-farq.plt.show()
-```
+Every plotting function **returns a matplotlib `Figure`**. Nothing is shown with
+`plt.show()` and no other figures are closed. Save the figure with `fig.savefig(...)`,
+display it in a notebook, or call `farq.plt.show()` (`farq.plt` is `matplotlib.pyplot`).
+To draw into your own layout, pass `ax=` (single-panel functions) or `axes=` (two-panel
+functions).
 
-## Performance Considerations
+## Next steps
 
-Farq is optimized for:
-- Memory-efficient operations
-- Vectorized computations
-- Large raster datasets
-- Parallel processing capabilities
+- [API reference](api.md)
+- [Change detection guide](change_detection.md)
+- [Drone imagery guide](drone.md)
+- [Examples](examples.md)
+- [Testing and development](testing.md)
+- [Changelog and migration notes](https://github.com/ferasqr/farq/blob/main/CHANGELOG.md)
 
-## Next Steps
-
-- Check out the [API Reference](api.md) for detailed function documentation
-- See [Examples](examples.md) for more use cases
-- Review [Testing](testing.md) for performance information
-
-## Support
-
-For issues and feature requests, please visit the project's GitHub repository. 
+Report issues and feature requests at <https://github.com/ferasqr/farq/issues>.

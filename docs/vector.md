@@ -145,7 +145,8 @@ print(len(exact["geometry"]["coordinates"][0]), len(smooth["geometry"]["coordina
   exterior ring that would collapse is kept unsimplified.
 - `preserve_topology=True` simplifies all polygons together with
   `shapely.coverage_simplify`, so shared edges stay identical. This requires
-  `shapely>=2.1`, which `farq[vector]` installs.
+  `shapely>=2.1`, which `farq[vector]` installs on Python 3.10+ (on Python 3.9 the
+  extra installs shapely 2.0 and this option raises a clear error).
 
 ## `to_geojson`
 

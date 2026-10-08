@@ -23,6 +23,15 @@ from farq import change, georef, indices
 UTM = CRS.from_epsg(32633)
 
 
+# These tests require farq itself to be warning-free. Deprecation notices raised inside
+# third-party code (rasterio's use of affine's ``*`` operator; NumPy 2.5's masked-array
+# shape assignment hit by older rasterio releases) are outside farq's control.
+_IGNORE_RASTERIO_DEPRECATIONS = pytest.mark.filterwarnings(
+    r"ignore::DeprecationWarning:(rasterio|numpy\.ma)"
+)
+_IGNORE_RASTERIO_PENDING = pytest.mark.filterwarnings("ignore::PendingDeprecationWarning:rasterio")
+
+
 def _write_raw(path, data, **meta):
     """Write a test fixture with rasterio directly (independent of farq.write)."""
     with warnings.catch_warnings():
@@ -83,6 +92,8 @@ def satellite_pair(tmp_path):
     return b_path, a_path
 
 
+@_IGNORE_RASTERIO_DEPRECATIONS
+@_IGNORE_RASTERIO_PENDING
 @pytest.mark.filterwarnings("error")
 def test_satellite_end_to_end(tmp_path, satellite_pair):
     b_path, a_path = satellite_pair
@@ -134,6 +145,8 @@ def test_satellite_end_to_end(tmp_path, satellite_pair):
     assert sorted(p.name for p in tmp_path.iterdir() if p.name.startswith(".")) == []
 
 
+@_IGNORE_RASTERIO_DEPRECATIONS
+@_IGNORE_RASTERIO_PENDING
 @pytest.mark.filterwarnings("error")
 def test_index_zero_survives_write_with_integer_source_metadata(tmp_path):
     """A derived float product must not inherit the integer source's nodata value.
@@ -183,6 +196,8 @@ def drone_pair(tmp_path):
     return b_path, a_path
 
 
+@_IGNORE_RASTERIO_DEPRECATIONS
+@_IGNORE_RASTERIO_PENDING
 @pytest.mark.filterwarnings("error")
 def test_drone_gcp_end_to_end(tmp_path, drone_pair):
     b_path, a_path = drone_pair
@@ -226,6 +241,8 @@ def test_drone_gcp_end_to_end(tmp_path, drone_pair):
     assert "gcps" not in back_meta
 
 
+@_IGNORE_RASTERIO_DEPRECATIONS
+@_IGNORE_RASTERIO_PENDING
 @pytest.mark.filterwarnings("error")
 def test_drone_rectify_then_align(tmp_path, drone_pair):
     b_path, a_path = drone_pair
@@ -248,6 +265,8 @@ def test_drone_rectify_then_align(tmp_path, drone_pair):
 # --------------------------------------------------------------------------- nodata
 
 
+@_IGNORE_RASTERIO_DEPRECATIONS
+@_IGNORE_RASTERIO_PENDING
 @pytest.mark.filterwarnings("error")
 def test_align_pair_with_different_integer_nodata_values():
     meta = {
@@ -267,6 +286,8 @@ def test_align_pair_with_different_integer_nodata_values():
     np.testing.assert_array_equal(a, [[np.nan], [8.0]])
 
 
+@_IGNORE_RASTERIO_DEPRECATIONS
+@_IGNORE_RASTERIO_PENDING
 @pytest.mark.filterwarnings("error")
 def test_change_module_accepts_analysis_inputs():
     """Masks from change feed analysis (pixel sizes in metres there, areas in km²)."""

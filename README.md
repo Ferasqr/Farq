@@ -1,59 +1,77 @@
 # Farq - فَرْق
+
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/51b7fd5d-2167-4f68-9c74-dae944c4a8f5" alt="1" width="200">
+  <img src="https://github.com/user-attachments/assets/51b7fd5d-2167-4f68-9c74-dae944c4a8f5" alt="Farq logo" width="200">
 </p>
 
+<p align="center">
+  <a href="https://pypi.org/project/farq/"><img src="https://img.shields.io/pypi/v/farq.svg" alt="PyPI version"></a>
+  <a href="https://pypi.org/project/farq/"><img src="https://img.shields.io/pypi/pyversions/farq.svg" alt="Python versions"></a>
+  <a href="https://github.com/ferasqr/farq/blob/main/LICENSE"><img src="https://img.shields.io/pypi/l/farq.svg" alt="License: MIT"></a>
+</p>
 
-
-
-A Python library for raster change detection and analysis, specializing in water body detection and monitoring using satellite imagery. Farq (Arabic: فَرْق, meaning "difference") simplifies the process of identifying and analyzing changes between raster datasets over time, with a focus on remote sensing applications.
+**Farq** (Arabic فَرْق, "difference") is a Python library for raster change detection with
+satellite and drone imagery. It takes two images of the same place from different dates,
+and handles the steps from reading them to reporting the change in km²: reading rasters
+with nodata as NaN, putting both dates on one pixel grid (including GCP-only drone
+orthomosaics and residual sub-pixel shifts), computing spectral or RGB indices, measuring
+and thresholding change, cleaning the change mask, and summarizing it as areas, water-body
+statistics or plots. Farq is built on NumPy, SciPy, rasterio/GDAL, scikit-learn and
+matplotlib.
 
 ## Features
 
-### Core Functions
-- Efficient raster data loading and handling
-- Change detection using multiple methods
-- Statistical analysis tools
-- Raster resampling and preprocessing
-- Memory-efficient operations
-- Robust error handling
+**Change detection** (`farq.change`)
+- One-call `detect_changes` with five change measures: difference, log-ratio (suits SAR),
+  normalized difference, change vector analysis (CVA) and PCA
+- Automatic thresholds (Otsu, mean + k·std, percentile) or a fixed value
+- Mask cleanup: remove small patches and fill holes (`clean_mask`)
+- Categorical change: gained / lost / stable maps (`classify_change`) and from-to
+  transition matrices for classified maps (`transition_matrix`)
+- `change_summary`: pixel counts, percentages and areas in m² and km², returned as
+  JSON-serializable dicts
 
-### Machine Learning
-- Image classification and feature extraction
-- Unsupervised water body detection using clustering
-- Change detection using ML models
-- Model training, saving, and loading
-- Automated parameter optimization
-- Support for multiple clustering algorithms (K-means, DBSCAN)
+**Spectral and RGB indices** (`farq.indices`)
+- Multispectral: NDWI, MNDWI, NDVI, EVI, SAVI, NDBI, NBR, NDMI
+- RGB-only, for drone cameras without a NIR band: VARI, ExG, ExR, ExGR, GLI, NGRDI, TGI
+- Integer bands are converted to float, so `uint16` data cannot overflow. A zero
+  denominator gives NaN.
 
-### Water Analysis
-- Water body detection and delineation
-- Surface area calculations
-- Temporal change analysis
-- Individual water body statistics
-- Performance-optimized for large datasets
+**Drone and GCP georeferencing and alignment** (`farq.georef`)
+- Read, build and check ground control points (`read_gcps`, `make_gcps`, `gcp_residuals`
+  with RMSE and leave-one-out errors to find bad GCPs)
+- Rectify GCP-referenced images with a polynomial or thin plate spline transform
+  (`georeference`, `rectify`)
+- Put two rasters with different CRS, resolution, extent or georeferencing on one common
+  grid cropped to their overlap (`align_pair`, `align`)
+- Sub-pixel co-registration by phase correlation (`coregister`, `apply_shift`)
+- Downsample huge orthomosaics while reading (`farq.read(..., out_shape=...)`)
 
-### Spectral Indices
-- **Water Indices:**
-  - NDWI (Normalized Difference Water Index)
-  - MNDWI (Modified Normalized Difference Water Index)
-- **Vegetation Indices:**
-  - NDVI (Normalized Difference Vegetation Index)
-  - SAVI (Soil Adjusted Vegetation Index)
-  - EVI (Enhanced Vegetation Index)
-- **Urban Indices:**
-  - NDBI (Normalized Difference Built-up Index)
-  - NBR (Normalized Burn Ratio)
-  - NDMI (Normalized Difference Moisture Index)
+**Water analysis** (`farq.analysis`)
+- Water area, coverage, number and size of water bodies
+- Gained, lost and stable water between two dates, with a minimum patch area
+- Per-body shape metrics: area, perimeter, compactness, elongation and orientation
 
-### Visualization Tools
-- Single raster visualization
-- Side-by-side raster comparison
-- Change detection visualization
-- Distribution analysis
-- RGB composite visualization
-- Customizable colormaps and scaling
-- Interactive plotting capabilities
+**Machine learning** (`farq.ml`)
+- Per-pixel features (bands, index layers, moving-window mean and variance)
+- Random-forest training, tiled prediction and training-data augmentation
+- Unsupervised water detection with k-means or DBSCAN, and silhouette-based parameter
+  search
+- Model files saved with a SHA-256 integrity check
+
+**Visualization** (`farq.visualization`)
+- Single rasters, side-by-side comparisons, diverging change maps, histograms and RGB
+  composites
+- Every function returns a matplotlib `Figure`. Nothing is shown or closed for you, and
+  you can draw into your own axes with `ax=` or `axes=`.
+
+**Performance and reliability**
+- Vectorized NumPy/SciPy code with no per-pixel or per-object Python loops
+- `import farq` is fast: submodules and heavy dependencies load on first use
+- NaN is the nodata value everywhere. Invalid pixels are never counted as change or as
+  water.
+- Inputs are validated with specific error messages, and inputs are never modified in place
+- Type hints (`py.typed`), Python 3.9-3.13, tested on Linux, macOS and Windows
 
 ## Installation
 
@@ -61,206 +79,189 @@ A Python library for raster change detection and analysis, specializing in water
 pip install farq
 ```
 
-## Quick Start
+Farq requires Python 3.9 or newer. rasterio wheels include GDAL, so no separate GDAL
+installation is needed on most platforms.
+
+## Quick start
+
+This example detects change between two dates of the same area:
 
 ```python
 import farq
 
-# Load raster bands
-green, meta = farq.read("landsat_green.tif")
-nir, _ = farq.read("landsat_nir.tif")
+before, before_meta = farq.read("nir_2020.tif", masked=True)  # nodata -> NaN
+after, after_meta = farq.read("nir_2024.tif", masked=True)
+before, after, meta = farq.align_pair(before, before_meta, after, after_meta)  # common grid
 
-# Calculate NDWI
-ndwi = farq.ndwi(green, nir)
-
-# Create water mask and calculate statistics
-water_mask = ndwi > 0
-water_pixels = farq.sum(water_mask)
-water_percentage = (water_pixels / water_mask.size) * 100
-
-print(f"Water coverage: {water_percentage:.1f}%")
-
-# Visualize results
-farq.plot(ndwi, title="NDWI Analysis", cmap="RdYlBu", vmin=-1, vmax=1)
-farq.plt.show()
+result = farq.detect_changes(before, after, method="difference", threshold="otsu", min_size=5)
+summary = result.summary(pixel_size=meta)
+print(f"{summary['changed_percent']:.1f}% changed = {summary['changed_area_km2']:.2f} km²")
+fig = farq.plot(result.mask, title="Change mask", cmap="Reds")
+fig.savefig("change_mask.png")
 ```
 
-## Common Operations
+## Satellite workflow: water change from Landsat
 
-### Water Analysis
+This workflow reads two dates with nodata as NaN, puts them on one grid, computes NDWI
+(water > 0), and then detects and summarizes the change:
+
 ```python
-# Load and preprocess data
-green_1, meta = farq.read("landsat_green_2020.tif")
-nir_1, _ = farq.read("landsat_nir_2020.tif")
-green_2, _ = farq.read("landsat_green_2024.tif")
-nir_2, _ = farq.read("landsat_nir_2024.tif")
-
-# Calculate NDWI for both periods
-ndwi_1 = farq.ndwi(green_1, nir_1)
-ndwi_2 = farq.ndwi(green_2, nir_2)
-
-# Compare water coverage
-farq.compare(ndwi_1, ndwi_2, 
-    title1="NDWI 2020", 
-    title2="NDWI 2024",
-    cmap="RdYlBu",
-    vmin=-1, vmax=1)
-farq.plt.show()
-```
-
-### Machine Learning Analysis
-```python
+import numpy as np
 import farq
 
-# Load and preprocess data
-bands = {
-    'blue': farq.read("landsat_blue.tif")[0],
-    'green': farq.read("landsat_green.tif")[0],
-    'nir': farq.read("landsat_nir.tif")[0]
-}
+# 1. Read green (B3) and NIR (B5) for both dates. masked=True turns nodata into NaN.
+green_20, meta_20 = farq.read("green_2020.tif", masked=True)
+nir_20, _ = farq.read("nir_2020.tif", masked=True)
+green_24, meta_24 = farq.read("green_2024.tif", masked=True)
+nir_24, _ = farq.read("nir_2024.tif", masked=True)
 
-# Extract features
-features = farq.extract_features(bands['nir'], window_size=3)
-
-# Train a classifier
-model, metrics = farq.train_classifier(features, labels, model_type='rf')
-print(f"Model accuracy: {metrics['accuracy']:.2f}")
-
-# Save the model
-farq.save_model(model, "water_classifier.joblib")
-
-# Detect water bodies using clustering
-labels, metadata = farq.cluster_water_bodies(
-    bands['nir'],
-    method='kmeans',
-    n_clusters=2,
-    water_index=farq.ndwi(bands['green'], bands['nir'])
+# 2. Put both dates on one pixel grid, cropped to their overlap. Bands of one date are
+#    stacked as (bands, rows, cols) so they are aligned together.
+before, after, meta = farq.align_pair(
+    np.stack([green_20, nir_20]), meta_20,
+    np.stack([green_24, nir_24]), meta_24,
 )
 
-# Analyze water clusters
-stats = farq.analyze_water_clusters(labels, metadata['water_cluster'])
-print(f"Number of water bodies: {stats['num_water_bodies']}")
-print(f"Total water area: {stats['total_water_area']:.2f} km²")
+# 3. NDWI = (green - nir) / (green + nir). Open water is > 0.
+ndwi_20 = farq.ndwi(before[0], before[1])
+ndwi_24 = farq.ndwi(after[0], after[1])
+
+# 4. Change magnitude |after - before|, Otsu threshold, drop patches below 5 pixels.
+result = farq.detect_changes(ndwi_20, ndwi_24, threshold="otsu", min_size=5)
+summary = result.summary(pixel_size=meta)  # areas from the grid's transform
+print(f"Changed: {summary['changed_area_km2']:.2f} km² ({summary['changed_percent']:.1f}%)")
+
+# 5. Gained / lost / stable water in km².
+valid = np.isfinite(ndwi_20) & np.isfinite(ndwi_24)
+classes = farq.classify_change(ndwi_20 > 0, ndwi_24 > 0, valid=valid)
+water = farq.change_summary(
+    classes, pixel_size=meta, labels=farq.CHANGE_LABELS, nodata=farq.CHANGE_NODATA
+)
+for name in ("gained", "lost", "stable"):
+    print(f"{name:>7}: {water['classes'][name]['area_km2']:.2f} km²")
+
+# 6. Plot (functions return a Figure; nothing is shown automatically).
+fig = farq.changes(ndwi_24 - ndwi_20, title="NDWI change 2020 to 2024", colorbar_label="ΔNDWI")
+fig.savefig("ndwi_change.png", dpi=150)
+
+# 7. Write GeoTIFFs on the common grid.
+farq.write("ndwi_change.tif", ndwi_24 - ndwi_20, meta)
+farq.write("water_change_classes.tif", classes, meta, nodata=farq.CHANGE_NODATA)
 ```
 
-### Change Detection with ML
+## Drone workflow: vegetation change between two flights
+
+Drone orthomosaics from two flights rarely share a grid. They may also be georeferenced
+only by ground control points (GCPs). `align_pair` rectifies GCP-referenced inputs and
+resamples both flights onto one grid in a single step. `coregister` then removes the
+small remaining translation, which would otherwise appear as false change along every
+edge.
+
 ```python
+import numpy as np
 import farq
 
-# Load data from two time periods
-nir_2020 = farq.read("landsat_nir_2020.tif")[0]
-nir_2024 = farq.read("landsat_nir_2024.tif")[0]
+# 1. Read RGB (bands 1-3; skip an alpha band if present). Both files carry only GCPs.
+rgb_23, meta_23 = farq.read("flight_2023.tif", band=[1, 2, 3])
+rgb_24, meta_24 = farq.read("flight_2024.tif", band=[1, 2, 3])
+print(farq.has_gcps(meta_23), farq.has_gcps(meta_24))  # True True
 
-# Detect changes using ML
-changes = farq.detect_changes_ml(nir_2020, nir_2024, threshold=0.5)
+# 2. Check GCP quality before trusting the georeferencing.
+for meta in (meta_23, meta_24):
+    report = farq.gcp_residuals(meta["gcps"], order=1)
+    print(f"RMSE {report.rmse:.3f} m ({report.rmse_pixels:.2f} px), suspicious GCPs: "
+          f"{[report.ids[i] for i in report.outliers()]}")
 
-# Visualize changes
-farq.changes(changes, title="Water Body Changes (2020-2024)",
-            cmap="RdYlBu", symmetric=True)
-farq.plt.show()
+# 3. Rectify both flights onto one grid at the coarser resolution, cropped to the overlap.
+#    uint8 input without a nodata value becomes float32 with NaN outside each footprint.
+before, after, meta = farq.align_pair(rgb_23, meta_23, rgb_24, meta_24, target="coarsest")
+
+# 4. Remove the residual sub-pixel shift (translation only).
+shift = farq.coregister(before, after)
+print(f"Residual shift (rows, cols): {shift} px")
+after = farq.apply_shift(after, shift)
+
+# 5. RGB vegetation index (no NIR band needed). farq.vari is an alternative.
+exg_23 = farq.exg(*before)
+exg_24 = farq.exg(*after)
+
+# 6. Detect change, then clean the mask: drop specks, fill small holes.
+result = farq.detect_changes(exg_23, exg_24, threshold="otsu")
+mask = farq.clean_mask(result.mask, min_size=50, fill_holes=200)
+
+# 7. Summarize in m² (drone areas are small).
+summary = farq.change_summary(mask, pixel_size=meta, valid=np.isfinite(result.magnitude))
+print(f"Vegetation change: {summary['changed_area_m2']:.1f} m² "
+      f"({summary['changed_percent']:.2f}% of the overlap)")
 ```
 
-### Vegetation Analysis
+## Saving and loading models
+
+`save_model` writes the model file and a `<file>.sha256` sidecar, and it returns the
+SHA-256 digest. `load_model` checks the hash before it unpickles the file, and raises
+`farq.ModelIntegrityError` if the hash does not match.
+
 ```python
-# Load bands
-bands = {
-    'blue': farq.read("landsat_blue.tif")[0],
-    'green': farq.read("landsat_green.tif")[0],
-    'red': farq.read("landsat_red.tif")[0],
-    'nir': farq.read("landsat_nir.tif")[0]
-}
+import numpy as np
+import farq
 
-# Calculate indices
-ndvi = farq.ndvi(bands['nir'], bands['red'])
-evi = farq.evi(bands['red'], bands['nir'], bands['blue'])
-savi = farq.savi(bands['nir'], bands['red'])
+bands = ("blue", "green", "red", "nir")
+stack = np.stack([farq.read(f"{b}_2024.tif", masked=True)[0] for b in bands], axis=-1)
+ndwi = farq.ndwi(stack[..., 1], stack[..., 3])
+features = farq.extract_features(stack, indices={"ndwi": ndwi}, window_size=3)
 
-# Analyze vegetation coverage
-veg_mask = ndvi > 0.2
-veg_percentage = (farq.sum(veg_mask) / veg_mask.size) * 100
-print(f"Vegetation coverage: {veg_percentage:.1f}%")
+# Weak labels from NDWI: 1 = water, 0 = land, -1 = unlabelled (ignored).
+labels = np.where(ndwi > 0.2, 1, np.where(ndwi < -0.2, 0, -1))
+model, metrics = farq.train_classifier(features, labels, ignore_label=-1, n_estimators=50)
+print(f"Hold-out accuracy: {metrics['accuracy']:.3f}")
 
-# Visualize indices
-farq.plot(ndvi, title="NDVI Analysis", cmap="RdYlGn", vmin=-1, vmax=1)
-farq.plt.show()
+digest = farq.save_model(model, "models/water_rf.joblib", metadata={"bands": bands})
+model, info = farq.load_model("models/water_rf.joblib", expected_sha256=digest)
+water = farq.predict_raster(model, features)  # -1 where any feature is NaN
 ```
 
-### RGB Visualization
-```python
-# Load RGB bands
-red = farq.read("landsat_red.tif")[0]
-green = farq.read("landsat_green.tif")[0]
-blue = farq.read("landsat_blue.tif")[0]
-
-# Create RGB composite
-farq.plot_rgb(red, green, blue, title="RGB Composite")
-farq.plt.show()
-```
+> **Security warning:** model files are Python pickles (joblib), and loading a pickle
+> can execute arbitrary code. **Never load model files from untrusted sources.** The sidecar hash only detects
+> accidental corruption or a swapped file. Someone who can replace the model can also
+> replace the sidecar. To guard against a malicious file, pin a hash that you received
+> through a trusted channel with `load_model(path, expected_sha256=...)`. Files without
+> any integrity data still load, with a warning.
 
 ## Documentation
 
-Comprehensive documentation is available in the [docs/](docs/) directory:
-
-- [Getting Started](docs/index.md)
-  - Installation and setup
-  - Basic concepts and terminology
-  - Quick start tutorials
-  - Common workflows
-
-- [API Reference](docs/api.md)
-  - Core functions and utilities
-  - Water analysis functions
-  - Spectral indices
-  - Machine learning APIs
-  - Visualization tools
-  - Error handling and best practices
-
-- [Examples](docs/examples.md)
-  - Basic usage examples
-  - Water body detection and analysis
-  - Change detection workflows
-  - Machine learning tutorials
-  - Clustering and classification
-  - Advanced visualization techniques
-  - Performance optimization tips
-
-- [Machine Learning Guide](docs/ml.md)
-  - Feature extraction and preprocessing
-  - Model training and evaluation
-  - Clustering algorithms
-  - Change detection with ML
-  - Model persistence
-  - Parameter optimization
-  - Best practices and tips
-
-- [Testing](docs/testing.md)
-  - Unit tests and coverage
-  - Integration tests
-  - Performance benchmarks
-  - Memory usage analysis
-  - Test data and fixtures
-
-- [Contributing](docs/contributing.md)
-  - Development setup
-  - Code style guide
-  - Pull request workflow
-  - Testing guidelines
-  - Documentation standards
-
-## Performance
-
-Farq is optimized for large raster datasets with:
-- Memory-efficient operations
-- Parallel processing capabilities
-- Vectorized computations
-- Optimized array operations
-- Robust error handling
-- Comprehensive input validation
+- [Getting started](https://github.com/ferasqr/farq/blob/main/docs/index.md): concepts
+  and conventions (array layouts, NaN as nodata, units)
+- [API reference](https://github.com/ferasqr/farq/blob/main/docs/api.md): every public
+  function, with signatures and return values
+- [Change detection guide](https://github.com/ferasqr/farq/blob/main/docs/change_detection.md):
+  change measures, thresholds, mask cleanup, transition matrices
+- [Drone imagery guide](https://github.com/ferasqr/farq/blob/main/docs/drone.md): GCPs,
+  rectification, alignment and co-registration
+- [Examples](https://github.com/ferasqr/farq/blob/main/docs/examples.md): recipes for
+  indices, water analysis, ML and plotting
+- [Testing](https://github.com/ferasqr/farq/blob/main/docs/testing.md): running the test
+  suite, linting and building
+- [Changelog](https://github.com/ferasqr/farq/blob/main/CHANGELOG.md): includes the
+  0.1 to 0.2 migration notes
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome. To set up a development environment:
+
+```bash
+git clone https://github.com/ferasqr/farq.git
+cd farq
+pip install -e ".[dev]"
+
+python -m pytest                    # test suite (performance tests are skipped)
+ruff check farq tests               # lint
+ruff format --check farq tests      # formatting
+```
+
+Please add tests for new behaviour and update the docs and `CHANGELOG.md`, then open a
+pull request. See [docs/testing.md](https://github.com/ferasqr/farq/blob/main/docs/testing.md)
+for details.
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+Farq is released under the [MIT License](https://github.com/ferasqr/farq/blob/main/LICENSE).

@@ -1,314 +1,682 @@
 """
 Spectral indices module for the Farq library.
 
-This module provides functions for calculating various spectral indices:
-- NDWI (Normalized Difference Water Index)
+This module provides functions for calculating common spectral indices:
+
+- NDWI (Normalized Difference Water Index, McFeeters 1996)
+- MNDWI (Modified Normalized Difference Water Index, Xu 2006)
 - NDVI (Normalized Difference Vegetation Index)
 - EVI (Enhanced Vegetation Index)
 - SAVI (Soil Adjusted Vegetation Index)
 - NDBI (Normalized Difference Built-up Index)
 - NBR (Normalized Burn Ratio)
 - NDMI (Normalized Difference Moisture Index)
+
+RGB-only indices for cameras without a NIR band (e.g. drones): VARI, ExG, ExR, ExGR,
+GLI, NGRDI and TGI.
+
+Conventions shared by all index functions:
+
+- Bands are converted to floating point (``float32`` for inputs that fit, such as
+  ``uint16`` digital numbers or ``float32`` reflectance, otherwise ``float64``), so
+  integer inputs never overflow. Inputs are never modified.
+- Pixels where the index is undefined (a zero denominator, e.g. ``0 / 0``) are NaN, and
+  NaN inputs propagate to NaN outputs. No ``RuntimeWarning`` is emitted.
+- With ``clip=True`` (default), finite results are clipped to ``[-1, 1]``.
+- Landsat 8/9 OLI band numbers are given in the docstrings for reference.
 """
 
+from __future__ import annotations
+
+from collections.abc import Callable, Iterable, Mapping
+from numbers import Real
+
 import numpy as np
-from typing import Optional, Dict, Union, List, Tuple
 
-def validate_bands(*bands: np.ndarray, reflectance_scale: Optional[float] = None) -> List[np.ndarray]:
-    """
-    Validate band arrays for spectral index calculations.
-    
-    Args:
-        *bands: Variable number of band arrays to validate
-        reflectance_scale: Optional scale factor for reflectance data (e.g., 10000 for Landsat 8 SR)
-        
-    Returns:
-        List of validated and optionally scaled band arrays
-        
-    Raises:
-        TypeError: If any band is not a numpy array
-        ValueError: If bands have different shapes or are empty
-    """
-    if not bands:
-        raise ValueError("No bands provided")
-    
-    validated_bands = []
-    
-    # Check each band
-    for i, band in enumerate(bands):
-        if not isinstance(band, np.ndarray):
-            raise TypeError(f"Band {i} must be a numpy array")
-        if band.size == 0:
-            raise ValueError(f"Band {i} cannot be empty")
-            
-        # Make a copy and apply scaling if needed
-        band_data = band.copy()
-        if reflectance_scale is not None:
-            band_data = band_data / reflectance_scale
-            
-        validated_bands.append(band_data)
-    
-    # Check shapes match
-    shape = validated_bands[0].shape
-    for i, band in enumerate(validated_bands[1:], 1):
-        if band.shape != shape:
-            raise ValueError(f"Band shapes do not match: {shape} != {band.shape}")
-            
-    return validated_bands
+from .core import validate_bands
 
-def calculate_normalized_difference(band1: np.ndarray, 
-                                 band2: np.ndarray, 
-                                 clip: bool = True) -> np.ndarray:
+__all__ = [
+    "calculate_indices",
+    "calculate_normalized_difference",
+    "evi",
+    "exg",
+    "exgr",
+    "exr",
+    "gli",
+    "mndwi",
+    "nbr",
+    "ndbi",
+    "ndmi",
+    "ndvi",
+    "ndwi",
+    "ngrdi",
+    "savi",
+    "tgi",
+    "validate_bands",
+    "vari",
+]
+
+
+def _safe_ratio(numerator: np.ndarray, denominator: np.ndarray, clip: bool) -> np.ndarray:
     """
-    Calculate normalized difference between two bands.
-    
-    Args:
-        band1: First band array
-        band2: Second band array
-        clip: Whether to clip values to [-1, 1] range
-        
-    Returns:
-        Normalized difference array
+    Divide in place, writing NaN where the denominator is zero, and optionally clip.
+
+    ``numerator`` must be a freshly allocated float array; it is reused as the output.
     """
-    with np.errstate(divide='ignore', invalid='ignore'):
-        nd = (band1 - band2) / (band1 + band2)
-        
-    # Handle division by zero and invalid values
-    nd = np.nan_to_num(nd, nan=0.0, posinf=0.0, neginf=0.0)
-    
-    # Clip values if requested
+    with np.errstate(divide="ignore", invalid="ignore"):
+        np.divide(numerator, denominator, out=numerator)
+    numerator[denominator == 0] = np.nan
     if clip:
-        np.clip(nd, -1.0, 1.0, out=nd)
-        
-    return nd
+        np.clip(numerator, -1.0, 1.0, out=numerator)
+    return numerator
 
-def ndvi(nir: np.ndarray, 
-         red: np.ndarray, 
-         reflectance_scale: Optional[float] = None) -> np.ndarray:
+
+def calculate_normalized_difference(
+    band1: np.ndarray, band2: np.ndarray, clip: bool = True
+) -> np.ndarray:
     """
-    Calculate Normalized Difference Vegetation Index (NDVI) for Landsat 8.
-    
-    NDVI = (NIR - RED) / (NIR + RED)
-    
+    Calculate the normalized difference ``(band1 - band2) / (band1 + band2)``.
+
     Args:
-        nir: Near-infrared band (B5)
-        red: Red band (B4)
-        reflectance_scale: Scale factor for reflectance data (10000 for Landsat 8 SR)
-        
+        band1: First band array.
+        band2: Second band array, with the same shape as ``band1``.
+        clip: Whether to clip values to the ``[-1, 1]`` range (only reachable outside
+            that range with negative inputs).
+
     Returns:
-        NDVI array with values in range [-1, 1]
-        Higher values (>0.2) indicate vegetation
-    """
-    nir, red = validate_bands(nir, red, reflectance_scale=reflectance_scale)
-    return calculate_normalized_difference(nir, red)
+        Floating point array of normalized differences. Pixels where
+        ``band1 + band2 == 0`` are NaN.
 
-def evi(red: np.ndarray, 
-        nir: np.ndarray, 
-        blue: np.ndarray,
-        reflectance_scale: Optional[float] = None,
-        G: float = 2.5, 
-        C1: float = 6.0, 
-        C2: float = 7.5, 
-        L: float = 1.0) -> np.ndarray:
+    Raises:
+        TypeError: If a band is not a numeric numpy array.
+        ValueError: If a band is empty or the shapes differ.
     """
-    Calculate Enhanced Vegetation Index (EVI) for Landsat 8.
-    
-    EVI = G * (NIR - RED) / (NIR + C1 * RED - C2 * BLUE + L)
-    
+    b1, b2 = validate_bands(band1, band2)
+    return _safe_ratio(b1 - b2, b1 + b2, clip)
+
+
+def ndvi(
+    nir: np.ndarray,
+    red: np.ndarray,
+    reflectance_scale: float | None = None,
+    *,
+    clip: bool = True,
+) -> np.ndarray:
+    """
+    Calculate the Normalized Difference Vegetation Index (NDVI).
+
+    ``NDVI = (NIR - Red) / (NIR + Red)``
+
     Args:
-        red: Red band (B4)
-        nir: Near-infrared band (B5)
-        blue: Blue band (B2)
-        reflectance_scale: Scale factor for reflectance data (10000 for Landsat 8 SR)
-        G: Gain factor (default: 2.5)
-        C1: Coefficient 1 for atmospheric resistance (default: 6.0)
-        C2: Coefficient 2 for atmospheric resistance (default: 7.5)
-        L: Canopy background adjustment (default: 1.0)
+        nir: Near-infrared band (Landsat 8/9 B5).
+        red: Red band (Landsat 8/9 B4).
+        reflectance_scale: Accepted for API consistency and validated; it does not
+            change the result because the ratio is scale invariant.
+        clip: Whether to clip values to ``[-1, 1]``.
+
+    Returns:
+        NDVI array in ``[-1, 1]``; values above about 0.2 indicate vegetation.
+    """
+    nir, red = validate_bands(nir, red)
+    _check_scale(reflectance_scale)
+    return _safe_ratio(nir - red, nir + red, clip)
+
+
+def ndwi(
+    green: np.ndarray,
+    nir: np.ndarray,
+    reflectance_scale: float | None = None,
+    *,
+    clip: bool = True,
+) -> np.ndarray:
+    """
+    Calculate the Normalized Difference Water Index (NDWI, McFeeters 1996).
+
+    ``NDWI = (Green - NIR) / (Green + NIR)``
+
+    Open water typically has values above 0.
+
+    Args:
+        green: Green band (Landsat 8/9 B3).
+        nir: Near-infrared band (Landsat 8/9 B5).
+        reflectance_scale: Accepted for API consistency and validated; it does not
+            change the result because the ratio is scale invariant.
+        clip: Whether to clip values to ``[-1, 1]``.
+
+    Returns:
+        NDWI array in ``[-1, 1]``.
+    """
+    green, nir = validate_bands(green, nir)
+    _check_scale(reflectance_scale)
+    return _safe_ratio(green - nir, green + nir, clip)
+
+
+def mndwi(
+    green: np.ndarray,
+    swir1: np.ndarray,
+    reflectance_scale: float | None = None,
+    *,
+    clip: bool = True,
+) -> np.ndarray:
+    """
+    Calculate the Modified Normalized Difference Water Index (MNDWI, Xu 2006).
+
+    ``MNDWI = (Green - SWIR1) / (Green + SWIR1)``
+
+    MNDWI separates open water from built-up land better than NDWI. Water typically has
+    values above 0.
+
+    Args:
+        green: Green band (Landsat 8/9 B3).
+        swir1: Short-wave infrared band 1 (Landsat 8/9 B6).
+        reflectance_scale: Accepted for API consistency and validated; it does not
+            change the result because the ratio is scale invariant.
+        clip: Whether to clip values to ``[-1, 1]``.
+
+    Returns:
+        MNDWI array in ``[-1, 1]``.
+    """
+    green, swir1 = validate_bands(green, swir1)
+    _check_scale(reflectance_scale)
+    return _safe_ratio(green - swir1, green + swir1, clip)
+
+
+def ndbi(
+    swir1: np.ndarray,
+    nir: np.ndarray,
+    reflectance_scale: float | None = None,
+    *,
+    clip: bool = True,
+) -> np.ndarray:
+    """
+    Calculate the Normalized Difference Built-up Index (NDBI).
+
+    ``NDBI = (SWIR1 - NIR) / (SWIR1 + NIR)``
+
+    Args:
+        swir1: Short-wave infrared band 1 (Landsat 8/9 B6).
+        nir: Near-infrared band (Landsat 8/9 B5).
+        reflectance_scale: Accepted for API consistency and validated; it does not
+            change the result because the ratio is scale invariant.
+        clip: Whether to clip values to ``[-1, 1]``.
+
+    Returns:
+        NDBI array in ``[-1, 1]``; higher values indicate built-up areas.
+    """
+    swir1, nir = validate_bands(swir1, nir)
+    _check_scale(reflectance_scale)
+    return _safe_ratio(swir1 - nir, swir1 + nir, clip)
+
+
+def nbr(
+    nir: np.ndarray,
+    swir2: np.ndarray,
+    reflectance_scale: float | None = None,
+    *,
+    clip: bool = True,
+) -> np.ndarray:
+    """
+    Calculate the Normalized Burn Ratio (NBR).
+
+    ``NBR = (NIR - SWIR2) / (NIR + SWIR2)``
+
+    Args:
+        nir: Near-infrared band (Landsat 8/9 B5).
+        swir2: Short-wave infrared band 2 (Landsat 8/9 B7).
+        reflectance_scale: Accepted for API consistency and validated; it does not
+            change the result because the ratio is scale invariant.
+        clip: Whether to clip values to ``[-1, 1]``.
+
+    Returns:
+        NBR array in ``[-1, 1]``; lower values indicate burned areas.
+    """
+    nir, swir2 = validate_bands(nir, swir2)
+    _check_scale(reflectance_scale)
+    return _safe_ratio(nir - swir2, nir + swir2, clip)
+
+
+def ndmi(
+    nir: np.ndarray,
+    swir1: np.ndarray,
+    reflectance_scale: float | None = None,
+    *,
+    clip: bool = True,
+) -> np.ndarray:
+    """
+    Calculate the Normalized Difference Moisture Index (NDMI).
+
+    ``NDMI = (NIR - SWIR1) / (NIR + SWIR1)``
+
+    Args:
+        nir: Near-infrared band (Landsat 8/9 B5).
+        swir1: Short-wave infrared band 1 (Landsat 8/9 B6).
+        reflectance_scale: Accepted for API consistency and validated; it does not
+            change the result because the ratio is scale invariant.
+        clip: Whether to clip values to ``[-1, 1]``.
+
+    Returns:
+        NDMI array in ``[-1, 1]``; higher values indicate higher moisture content.
+    """
+    nir, swir1 = validate_bands(nir, swir1)
+    _check_scale(reflectance_scale)
+    return _safe_ratio(nir - swir1, nir + swir1, clip)
+
+
+def evi(
+    red: np.ndarray,
+    nir: np.ndarray,
+    blue: np.ndarray,
+    reflectance_scale: float | None = None,
+    G: float = 2.5,
+    C1: float = 6.0,
+    C2: float = 7.5,
+    L: float = 1.0,
+    *,
+    clip: bool = True,
+) -> np.ndarray:
+    """
+    Calculate the Enhanced Vegetation Index (EVI, Huete et al. 2002).
+
+    ``EVI = G * (NIR - Red) / (NIR + C1 * Red - C2 * Blue + L)``
+
+    Unlike the normalized difference indices, EVI depends on the absolute reflectance
+    values: bands must be surface reflectance in ``[0, 1]``. Pass ``reflectance_scale``
+    (e.g. ``10000``) if the bands are stored as scaled integers.
+
+    Args:
+        red: Red band (Landsat 8/9 B4).
+        nir: Near-infrared band (Landsat 8/9 B5).
+        blue: Blue band (Landsat 8/9 B2).
+        reflectance_scale: Scale factor to convert the bands to reflectance.
+        G: Gain factor (default 2.5).
+        C1: Aerosol resistance coefficient for the red band (default 6.0).
+        C2: Aerosol resistance coefficient for the blue band (default 7.5).
+        L: Canopy background adjustment (default 1.0).
+        clip: Whether to clip values to ``[-1, 1]``.
+
+    Returns:
+        EVI array; pixels with a zero denominator are NaN.
+
+    Raises:
+        TypeError: If a band or coefficient has the wrong type.
+        ValueError: If bands are invalid, ``G`` is not positive or ``L`` is negative.
     """
     red, nir, blue = validate_bands(red, nir, blue, reflectance_scale=reflectance_scale)
-    
-    # Parameter validation
-    if not all(isinstance(x, (int, float)) for x in [G, C1, C2, L]):
-        raise TypeError("All coefficients must be numeric")
+    _check_coefficients(G=G, C1=C1, C2=C2, L=L)
     if L < 0:
         raise ValueError("L must be non-negative")
     if G <= 0:
         raise ValueError("G must be positive")
-    
-    # Calculate EVI with proper error handling
-    with np.errstate(divide='ignore', invalid='ignore'):
-        denominator = nir + C1 * red - C2 * blue + L
-        evi = G * (nir - red) / denominator
-        
-    # Handle division by zero and invalid values
-    evi = np.nan_to_num(evi, nan=0.0, posinf=0.0, neginf=0.0)
-    
-    # Clip to reasonable range
-    np.clip(evi, -1.0, 1.0, out=evi)
-    
-    return evi
 
-def savi(nir: np.ndarray, 
-         red: np.ndarray, 
-         reflectance_scale: Optional[float] = None,
-         L: float = 0.5) -> np.ndarray:
+    dtype = nir.dtype.type
+    denominator = nir + dtype(C1) * red
+    denominator -= dtype(C2) * blue
+    denominator += dtype(L)
+    numerator = nir - red
+    numerator *= dtype(G)
+    return _safe_ratio(numerator, denominator, clip)
+
+
+def savi(
+    nir: np.ndarray,
+    red: np.ndarray,
+    reflectance_scale: float | None = None,
+    L: float = 0.5,
+    *,
+    clip: bool = True,
+) -> np.ndarray:
     """
-    Calculate Soil Adjusted Vegetation Index (SAVI) for Landsat 8.
-    
-    SAVI = ((NIR - RED) / (NIR + RED + L)) * (1 + L)
-    
+    Calculate the Soil Adjusted Vegetation Index (SAVI, Huete 1988).
+
+    ``SAVI = (1 + L) * (NIR - Red) / (NIR + Red + L)``
+
+    Like EVI, SAVI depends on absolute reflectance values in ``[0, 1]``; pass
+    ``reflectance_scale`` for scaled integer data.
+
     Args:
-        nir: Near-infrared band (B5)
-        red: Red band (B4)
-        reflectance_scale: Scale factor for reflectance data (10000 for Landsat 8 SR)
-        L: Soil brightness correction factor (default: 0.5)
+        nir: Near-infrared band (Landsat 8/9 B5).
+        red: Red band (Landsat 8/9 B4).
+        reflectance_scale: Scale factor to convert the bands to reflectance.
+        L: Soil brightness correction factor in ``[0, 1]`` (default 0.5). ``L = 0``
+            gives NDVI.
+        clip: Whether to clip values to ``[-1, 1]``.
+
+    Returns:
+        SAVI array; pixels with a zero denominator are NaN.
+
+    Raises:
+        TypeError: If a band or ``L`` has the wrong type.
+        ValueError: If bands are invalid or ``L`` is outside ``[0, 1]``.
     """
     nir, red = validate_bands(nir, red, reflectance_scale=reflectance_scale)
-    
-    # Parameter validation
-    if not isinstance(L, (int, float)):
-        raise TypeError("L must be numeric")
+    _check_coefficients(L=L)
     if not 0 <= L <= 1:
         raise ValueError("L must be between 0 and 1")
-    
-    # Calculate SAVI with proper error handling
-    with np.errstate(divide='ignore', invalid='ignore'):
-        savi = ((nir - red) / (nir + red + L)) * (1 + L)
-        
-    # Handle division by zero and invalid values
-    savi = np.nan_to_num(savi, nan=0.0, posinf=0.0, neginf=0.0)
-    
-    # Ensure output is in [-1, 1] range
-    np.clip(savi, -1.0, 1.0, out=savi)
-    
-    return savi
 
-def ndwi(green: np.ndarray, 
-         nir: np.ndarray, 
-         reflectance_scale: Optional[float] = None) -> np.ndarray:
+    dtype = nir.dtype.type
+    numerator = nir - red
+    numerator *= dtype(1 + L)
+    denominator = nir + red
+    denominator += dtype(L)
+    return _safe_ratio(numerator, denominator, clip)
+
+
+# --------------------------------------------------------------------------- RGB indices
+# Visible-band indices for consumer RGB cameras (e.g. drones) without a NIR band. They
+# accept 8-bit image bands directly. Ratio-based indices are scale invariant, so
+# ``reflectance_scale`` only matters for :func:`tgi`.
+
+
+def _chromatic_index(
+    weights: tuple[float, float, float],
+    red: np.ndarray,
+    green: np.ndarray,
+    blue: np.ndarray,
+    reflectance_scale: float | None,
+) -> np.ndarray:
+    """``wr*r + wg*g + wb*b`` on chromatic coordinates ``r = R / (R + G + B)`` etc."""
+    red, green, blue = validate_bands(red, green, blue)
+    _check_scale(reflectance_scale)
+    dtype = red.dtype.type
+    wr, wg, wb = (dtype(w) for w in weights)
+    numerator = wr * red
+    numerator += wg * green
+    numerator += wb * blue
+    total = red + green
+    total += blue
+    return _safe_ratio(numerator, total, clip=False)
+
+
+def exg(
+    red: np.ndarray,
+    green: np.ndarray,
+    blue: np.ndarray,
+    reflectance_scale: float | None = None,
+) -> np.ndarray:
     """
-    Calculate Normalized Difference Water Index (NDWI).
-    
-    For Landsat 8:
-    NDWI = (NIR - GREEN) / (NIR + GREEN)
-    Water typically has values < 0
-    
+    Calculate the Excess Green index (ExG, Woebbecke et al. 1995).
+
+    ``ExG = 2g - r - b`` on chromatic coordinates ``r = R / (R + G + B)``,
+    ``g = G / (R + G + B)``, ``b = B / (R + G + B)``.
+
     Args:
-        green: Green band array (B3 in Landsat 8)
-        nir: Near-infrared band array (B5 in Landsat 8)
-        reflectance_scale: Scale factor for reflectance data (e.g., 10000 for Landsat 8 SR)
-        
-    Returns:
-        NDWI array with values in range [-1, 1]
-    """
-    green, nir = validate_bands(green, nir, reflectance_scale=reflectance_scale)
-    return calculate_normalized_difference(nir, green)  # Flipped order for Landsat 8
+        red: Red band.
+        green: Green band.
+        blue: Blue band.
+        reflectance_scale: Accepted for API consistency and validated; it does not
+            change the result.
 
-def ndbi(swir1: np.ndarray, 
-         nir: np.ndarray, 
-         reflectance_scale: Optional[float] = None) -> np.ndarray:
+    Returns:
+        ExG array in ``[-1, 2]``; vegetation typically has values above about 0.1.
+        Pixels with ``R + G + B == 0`` are NaN.
     """
-    Calculate Normalized Difference Built-up Index (NDBI) for Landsat 8.
-    
-    NDBI = (SWIR1 - NIR) / (SWIR1 + NIR)
-    
+    return _chromatic_index((-1.0, 2.0, -1.0), red, green, blue, reflectance_scale)
+
+
+def exr(
+    red: np.ndarray,
+    green: np.ndarray,
+    blue: np.ndarray,
+    reflectance_scale: float | None = None,
+) -> np.ndarray:
+    """
+    Calculate the Excess Red index (ExR, Meyer et al. 1998).
+
+    ``ExR = 1.4r - g`` on chromatic coordinates (see :func:`exg`).
+
     Args:
-        swir1: Short-wave infrared band 1 (B6)
-        nir: Near-infrared band (B5)
-        reflectance_scale: Scale factor for reflectance data (10000 for Landsat 8 SR)
-        
-    Returns:
-        NDBI array with values in range [-1, 1]
-        Higher values indicate built-up areas
-    """
-    swir1, nir = validate_bands(swir1, nir, reflectance_scale=reflectance_scale)
-    return calculate_normalized_difference(swir1, nir)
+        red: Red band.
+        green: Green band.
+        blue: Blue band (used for the chromatic normalization).
+        reflectance_scale: Accepted for API consistency and validated; it does not
+            change the result.
 
-def nbr(nir: np.ndarray, 
-        swir2: np.ndarray, 
-        reflectance_scale: Optional[float] = None) -> np.ndarray:
+    Returns:
+        ExR array in ``[-1, 1.4]``; soil and residue have higher values than vegetation.
+        Pixels with ``R + G + B == 0`` are NaN.
     """
-    Calculate Normalized Burn Ratio (NBR) for Landsat 8.
-    
-    NBR = (NIR - SWIR2) / (NIR + SWIR2)
-    
+    return _chromatic_index((1.4, -1.0, 0.0), red, green, blue, reflectance_scale)
+
+
+def exgr(
+    red: np.ndarray,
+    green: np.ndarray,
+    blue: np.ndarray,
+    reflectance_scale: float | None = None,
+) -> np.ndarray:
+    """
+    Calculate the Excess Green minus Excess Red index (ExGR, Meyer & Neto 2008).
+
+    ``ExGR = ExG - ExR = 3g - 2.4r - b`` on chromatic coordinates (see :func:`exg`).
+
     Args:
-        nir: Near-infrared band (B5)
-        swir2: Short-wave infrared band 2 (B7)
-        reflectance_scale: Scale factor for reflectance data (10000 for Landsat 8 SR)
-        
-    Returns:
-        NBR array with values in range [-1, 1]
-        Lower values indicate burned areas
-    """
-    nir, swir2 = validate_bands(nir, swir2, reflectance_scale=reflectance_scale)
-    return calculate_normalized_difference(nir, swir2)
+        red: Red band.
+        green: Green band.
+        blue: Blue band.
+        reflectance_scale: Accepted for API consistency and validated; it does not
+            change the result.
 
-def ndmi(nir: np.ndarray, 
-         swir1: np.ndarray, 
-         reflectance_scale: Optional[float] = None) -> np.ndarray:
+    Returns:
+        ExGR array in ``[-2.4, 3]``; values above 0 indicate vegetation.
+        Pixels with ``R + G + B == 0`` are NaN.
     """
-    Calculate Normalized Difference Moisture Index (NDMI) for Landsat 8.
-    
-    NDMI = (NIR - SWIR1) / (NIR + SWIR1)
-    
+    return _chromatic_index((-2.4, 3.0, -1.0), red, green, blue, reflectance_scale)
+
+
+def gli(
+    red: np.ndarray,
+    green: np.ndarray,
+    blue: np.ndarray,
+    reflectance_scale: float | None = None,
+    *,
+    clip: bool = True,
+) -> np.ndarray:
+    """
+    Calculate the Green Leaf Index (GLI, Louhaichi et al. 2001).
+
+    ``GLI = (2G - R - B) / (2G + R + B)``
+
     Args:
-        nir: Near-infrared band (B5)
-        swir1: Short-wave infrared band 1 (B6)
-        reflectance_scale: Scale factor for reflectance data (10000 for Landsat 8 SR)
-        
-    Returns:
-        NDMI array with values in range [-1, 1]
-        Higher values indicate higher moisture content
-    """
-    nir, swir1 = validate_bands(nir, swir1, reflectance_scale=reflectance_scale)
-    return calculate_normalized_difference(nir, swir1)
+        red: Red band.
+        green: Green band.
+        blue: Blue band.
+        reflectance_scale: Accepted for API consistency and validated; it does not
+            change the result.
+        clip: Whether to clip values to ``[-1, 1]``.
 
-def calculate_indices(bands: Dict[str, np.ndarray], 
-                     indices: List[str],
-                     reflectance_scale: Optional[float] = None) -> Dict[str, np.ndarray]:
+    Returns:
+        GLI array in ``[-1, 1]``; positive values indicate green vegetation.
+    """
+    red, green, blue = validate_bands(red, green, blue)
+    _check_scale(reflectance_scale)
+    two_green = green + green
+    numerator = two_green - red
+    numerator -= blue
+    denominator = two_green
+    denominator += red
+    denominator += blue
+    return _safe_ratio(numerator, denominator, clip)
+
+
+def ngrdi(
+    red: np.ndarray,
+    green: np.ndarray,
+    reflectance_scale: float | None = None,
+    *,
+    clip: bool = True,
+) -> np.ndarray:
+    """
+    Calculate the Normalized Green Red Difference Index (NGRDI, Tucker 1979).
+
+    ``NGRDI = (G - R) / (G + R)``
+
+    Args:
+        red: Red band.
+        green: Green band.
+        reflectance_scale: Accepted for API consistency and validated; it does not
+            change the result.
+        clip: Whether to clip values to ``[-1, 1]``.
+
+    Returns:
+        NGRDI array in ``[-1, 1]``; positive values indicate green vegetation.
+    """
+    red, green = validate_bands(red, green)
+    _check_scale(reflectance_scale)
+    return _safe_ratio(green - red, green + red, clip)
+
+
+def vari(
+    red: np.ndarray,
+    green: np.ndarray,
+    blue: np.ndarray,
+    reflectance_scale: float | None = None,
+    *,
+    clip: bool = True,
+) -> np.ndarray:
+    """
+    Calculate the Visible Atmospherically Resistant Index (VARI, Gitelson et al. 2002).
+
+    ``VARI = (G - R) / (G + R - B)``
+
+    The denominator can approach zero for some colours, producing extreme values;
+    ``clip=True`` (default) limits the result to ``[-1, 1]``.
+
+    Args:
+        red: Red band.
+        green: Green band.
+        blue: Blue band.
+        reflectance_scale: Accepted for API consistency and validated; it does not
+            change the result.
+        clip: Whether to clip values to ``[-1, 1]``.
+
+    Returns:
+        VARI array; pixels with ``G + R - B == 0`` are NaN.
+    """
+    red, green, blue = validate_bands(red, green, blue)
+    _check_scale(reflectance_scale)
+    denominator = green + red
+    denominator -= blue
+    return _safe_ratio(green - red, denominator, clip)
+
+
+def tgi(
+    red: np.ndarray,
+    green: np.ndarray,
+    blue: np.ndarray,
+    reflectance_scale: float | None = None,
+    *,
+    wavelengths: tuple[float, float, float] = (670.0, 550.0, 480.0),
+) -> np.ndarray:
+    """
+    Calculate the Triangular Greenness Index (TGI, Hunt et al. 2011).
+
+    ``TGI = -0.5 * [(λr - λb)(R - G) - (λr - λg)(R - B)]``
+
+    With the default band centres (670, 550, 480 nm) this is
+    ``TGI = -0.5 * [190 (R - G) - 120 (R - B)]``. TGI is not normalized: it scales with
+    the input, so pass ``reflectance_scale`` (e.g. ``255`` for 8-bit images) to get
+    reflectance-like values.
+
+    Args:
+        red: Red band.
+        green: Green band.
+        blue: Blue band.
+        reflectance_scale: Optional scale factor to divide the bands by.
+        wavelengths: Centre wavelengths ``(red, green, blue)`` in nm of the sensor.
+
+    Returns:
+        TGI array; higher values indicate more chlorophyll.
+    """
+    red, green, blue = validate_bands(red, green, blue, reflectance_scale=reflectance_scale)
+    if len(wavelengths) != 3:
+        raise ValueError("wavelengths must be a (red, green, blue) tuple")
+    lr, lg, lb = wavelengths
+    _check_coefficients(red_wavelength=lr, green_wavelength=lg, blue_wavelength=lb)
+    dtype = red.dtype.type
+    out = red - green
+    out *= dtype(-0.5 * (lr - lb))
+    rb = red - blue
+    rb *= dtype(0.5 * (lr - lg))
+    out += rb
+    return out
+
+
+def _check_coefficients(**coefficients: float) -> None:
+    for name, value in coefficients.items():
+        if isinstance(value, bool) or not isinstance(value, Real):
+            raise TypeError(f"{name} must be numeric, got {type(value).__name__}")
+
+
+def _check_scale(reflectance_scale: float | None) -> None:
+    if reflectance_scale is not None:
+        _check_coefficients(reflectance_scale=reflectance_scale)
+        if not reflectance_scale > 0:
+            raise ValueError(f"reflectance_scale must be positive, got {reflectance_scale}")
+
+
+# Index name -> (required band names, function)
+_INDICES: dict[str, tuple[tuple[str, ...], Callable[..., np.ndarray]]] = {
+    "ndvi": (("nir", "red"), ndvi),
+    "ndwi": (("green", "nir"), ndwi),
+    "mndwi": (("green", "swir1"), mndwi),
+    "evi": (("red", "nir", "blue"), evi),
+    "savi": (("nir", "red"), savi),
+    "ndbi": (("swir1", "nir"), ndbi),
+    "nbr": (("nir", "swir2"), nbr),
+    "ndmi": (("nir", "swir1"), ndmi),
+    "vari": (("red", "green", "blue"), vari),
+    "exg": (("red", "green", "blue"), exg),
+    "exr": (("red", "green", "blue"), exr),
+    "exgr": (("red", "green", "blue"), exgr),
+    "gli": (("red", "green", "blue"), gli),
+    "ngrdi": (("red", "green"), ngrdi),
+    "tgi": (("red", "green", "blue"), tgi),
+}
+
+
+def calculate_indices(
+    bands: Mapping[str, np.ndarray],
+    indices: str | Iterable[str],
+    reflectance_scale: float | None = None,
+) -> dict[str, np.ndarray]:
     """
     Calculate multiple spectral indices at once.
-    
+
     Args:
-        bands: Dictionary of band arrays with keys like 'red', 'nir', 'swir1', etc.
-        indices: List of index names to calculate ('ndvi', 'ndwi', etc.)
-        reflectance_scale: Scale factor for reflectance data
-        
+        bands: Mapping of band name to array. Recognised names are ``"blue"``,
+            ``"green"``, ``"red"``, ``"nir"``, ``"swir1"`` and ``"swir2"``.
+        indices: Index name or names to calculate (case-insensitive): ``"ndvi"``,
+            ``"ndwi"``, ``"mndwi"``, ``"evi"``, ``"savi"``, ``"ndbi"``, ``"nbr"``,
+            ``"ndmi"``, and the RGB-only ``"vari"``, ``"exg"``, ``"exr"``, ``"exgr"``,
+            ``"gli"``, ``"ngrdi"``, ``"tgi"``.
+        reflectance_scale: Scale factor for reflectance data (only affects EVI, SAVI
+            and TGI).
+
     Returns:
-        Dictionary of calculated indices
-        
+        Dictionary mapping each lower-case index name to its array.
+
+    Raises:
+        ValueError: If an index name is unknown or a required band is missing.
+
     Example:
-        >>> bands = {'red': red_array, 'nir': nir_array, 'green': green_array}
-        >>> indices = calculate_indices(bands, ['ndvi', 'ndwi'], reflectance_scale=10000)
-        >>> ndvi_array = indices['ndvi']
-        >>> ndwi_array = indices['ndwi']
+        >>> bands = {"red": red, "nir": nir, "green": green}
+        >>> result = calculate_indices(bands, ["ndvi", "ndwi"], reflectance_scale=10000)
+        >>> ndvi_array = result["ndvi"]
     """
-    available_indices = {
-        'ndvi': (('nir', 'red'), ndvi),
-        'ndwi': (('green', 'nir'), ndwi),
-        'evi': (('red', 'nir', 'blue'), evi),
-        'savi': (('nir', 'red'), savi),
-        'ndbi': (('swir1', 'nir'), ndbi),
-        'nbr': (('nir', 'swir2'), nbr),
-        'ndmi': (('nir', 'swir1'), ndmi)
+    names = [indices] if isinstance(indices, str) else list(indices)
+
+    plan = []
+    for name in names:
+        key = name.lower()
+        if key not in _INDICES:
+            raise ValueError(f"Unknown index: {name!r}. Available: {', '.join(_INDICES)}")
+        required, func = _INDICES[key]
+        missing = [band for band in required if band not in bands]
+        if missing:
+            raise ValueError(f"Missing required bands for {key}: {missing}")
+        plan.append((key, required, func))
+
+    return {
+        key: func(*(bands[b] for b in required), reflectance_scale=reflectance_scale)
+        for key, required, func in plan
     }
-    
-    result = {}
-    
-    for index_name in indices:
-        if index_name not in available_indices:
-            raise ValueError(f"Unknown index: {index_name}")
-            
-        required_bands, func = available_indices[index_name]
-        
-        # Check if all required bands are available
-        missing_bands = [band for band in required_bands if band not in bands]
-        if missing_bands:
-            raise ValueError(f"Missing required bands for {index_name}: {missing_bands}")
-        
-        # Calculate the index
-        band_arrays = [bands[band] for band in required_bands]
-        result[index_name] = func(*band_arrays, reflectance_scale=reflectance_scale)
-    
-    return result 

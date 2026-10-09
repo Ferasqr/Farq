@@ -1,200 +1,103 @@
-# Testing Documentation
+# Testing and development
 
-## Overview
-
-Farq includes a comprehensive test suite to ensure reliability and performance. The tests cover core functionality, spectral indices, visualization components, and performance benchmarks.
-
-## Running Tests
-
-To run the test suite:
+## Setup
 
 ```bash
-# Install test dependencies
-pip install -r requirements-test.txt
-
-# Run all tests
-python -m pytest tests/
-
-# Run specific test file
-python -m pytest tests/test_core.py
-
-# Run tests with coverage report
-python -m pytest --cov=farq tests/
+git clone https://github.com/ferasqr/farq.git
+cd farq
+pip install -e ".[dev]"     # farq + pytest, pytest-cov, psutil, ruff, mypy, build, twine
 ```
 
-## Test Structure
+The `test` extra (`pip install -e ".[test]"`) installs only the test dependencies. All
+tool configuration lives in `pyproject.toml`.
 
-### Core Tests (`test_core.py`)
-- Data loading and validation
-- Array operations
-- Statistical functions
-- Resampling operations
-- NDWI calculations
-- Error handling and input validation
+## Running the tests
 
-### Spectral Index Tests (`test_indices.py`)
-- NDWI calculation and validation
-- NDVI calculation and validation
-- EVI calculation and validation
-- SAVI calculation and validation
-- Edge cases and error handling
-- Input validation
+```bash
+python -m pytest                          # whole suite; performance tests are skipped
+python -m pytest tests/test_change.py     # one module
+python -m pytest -k "align_pair"          # tests matching a name
+python -m pytest --cov=farq --cov-report=term-missing   # with coverage
+```
 
-### Visualization Tests (`test_visualization.py`)
-- Plot function validation
-- Compare function validation
-- RGB visualization
-- Histogram plotting
-- Distribution comparison
-- Colormap handling
-- Figure management
-- Colorbar handling
+The tests create their own small synthetic rasters (see the fixtures in
+`tests/conftest.py`, such as a georeferenced multi-band GeoTIFF and a GCP-only drone
+image), so no external data is needed. There is one test module per package module
+(`test_core.py`, `test_indices.py`, `test_change.py`, `test_georef.py`,
+`test_analysis.py`, `test_ml.py`, `test_visualization.py`, `test_utils.py`). There are
+also `test_integration.py` for end-to-end workflows (read, align, index, detect, summarize,
+write), `test_package.py` for the lazy top-level namespace, and `test_performance.py`.
 
-### Performance Tests (`test_performance.py`)
-- Small array operations
-- Medium array operations
-- Large array operations
-- Memory usage monitoring
-- Processing speed benchmarks
+pytest runs with `--strict-markers`, and any `DeprecationWarning` raised from farq is an
+error.
 
-## Test Data
+## Performance tests
 
-Test data includes various sizes of Landsat imagery:
-- Small (100x100 pixels)
-- Medium (1000x1000 pixels)
-- Large (5000x5000 pixels)
+Heavy speed and memory tests are marked `@pytest.mark.performance` and are **skipped by
+default**. To run them, use either form:
 
-## Performance Benchmarks
+```bash
+python -m pytest -m performance tests/test_performance.py
+FARQ_RUN_PERFORMANCE=1 python -m pytest tests/test_performance.py
+```
 
-Latest benchmark results for common operations:
+To exclude them explicitly (as CI does):
 
-### Small Dataset (100x100)
-- Load time: < 0.1s
-- NDWI calculation: < 0.5s
-- Visualization: < 0.5s
-- Memory usage: < 100MB
+```bash
+python -m pytest -m "not performance"
+```
 
-### Medium Dataset (1000x1000)
-- Load time: < 0.5s
-- NDWI calculation: < 2.0s
-- Visualization: < 2.0s
-- Memory usage: < 500MB
+Memory checks use `psutil`. If it is not installed, those tests are skipped. A few quick
+scaling smoke tests in `test_performance.py` always run. They check that the vectorized
+code paths do not regress to per-object Python loops.
 
-### Large Dataset (5000x5000)
-- Load time: < 5.0s
-- NDWI calculation: < 10.0s
-- Visualization: < 10.0s
-- Memory usage: < 2GB
+## Linting, formatting and type checking
 
-## Memory Usage
+```bash
+ruff check farq tests            # lint (rules: E, F, W, I, B, UP, SIM, RUF, NPY)
+ruff format --check farq tests   # formatting; drop --check to apply
+ruff check --fix farq tests      # auto-fix what can be fixed
+mypy farq                        # optional static type check
+```
 
-Memory usage is monitored for:
-- Data loading
-- Index calculations
-- Statistical operations
-- Visualization functions
+The line length is 100, and the target version is Python 3.9.
 
-Memory limits are enforced to ensure efficient operation:
-- Small operations: < 500MB
-- Medium operations: < 1GB
-- Large operations: < 2GB
+## Building the package
 
-## Test Coverage
+```bash
+python -m build                  # sdist and wheel in dist/
+twine check --strict dist/*      # validate metadata and the README rendering for PyPI
+```
 
-Current test coverage includes:
-- Core functions: 95%
-- Spectral indices: 100%
-- Visualization: 90%
-- Statistical operations: 95%
-- Error handling: 100%
-- Input validation: 100%
+`README.md` is the PyPI project description, so use absolute URLs for its links and
+images.
 
-## Continuous Integration
+## Checking the documentation examples
 
-The test suite runs automatically on:
-- Pull requests
-- Main branch commits
-- Release tags
+The code blocks in `README.md` and `docs/*.md` are written to run as they are against
+real GeoTIFFs. When you change an example, run it against small synthetic rasters with
+the same file names, and use the `Agg` matplotlib backend (`MPLBACKEND=Agg`) so that no
+windows open.
 
-Tests are run on multiple platforms:
-- Linux
-- Windows
-- macOS
+## Continuous integration
 
-And multiple Python versions:
-- Python 3.7
-- Python 3.8
-- Python 3.9
-- Python 3.10
+GitHub Actions (`.github/workflows/ci.yml`) runs on pushes to `main` and on pull
+requests:
 
-## Contributing Tests
+- **lint**: `ruff check` and `ruff format --check`
+- **test**: `pytest -m "not performance"` with coverage on Python 3.9-3.13 (Ubuntu), plus
+  Python 3.12 on macOS and Windows
+- **build**: `python -m build` and `twine check --strict`
 
-When adding new features:
-1. Add corresponding test cases
-2. Ensure test coverage
-3. Include performance benchmarks
-4. Document test cases
-5. Verify error handling
-6. Add input validation tests
+Publishing a GitHub release triggers `.github/workflows/publish.yml`, which builds the
+package and uploads it to PyPI.
 
-## Test Categories
+## Contributing tests
 
-### Unit Tests
-- Individual function testing
-- Input validation
-- Error handling
-- Edge cases
-
-### Integration Tests
-- Multi-function workflows
-- File I/O operations
-- Cross-module functionality
-
-### Performance Tests
-- Processing speed
-- Memory usage
-- Resource efficiency
-- Scalability
-
-### Visualization Tests
-- Plot accuracy
-- Figure properties
-- Colormap handling
-- Interactive features
-
-## Error Handling Tests
-
-All functions are tested for proper error handling:
-- Invalid inputs
-- Missing data
-- Type mismatches
-- Shape mismatches
-- Out of memory conditions
-- File I/O errors
-
-## Input Validation Tests
-
-Comprehensive validation testing for:
-- Data types
-- Array shapes
-- Value ranges
-- NaN handling
-- Missing data
-- Parameter validation
-
-## Benchmark Tests
-
-Performance benchmarks include:
-- Execution time
-- Memory usage
-- CPU utilization
-- I/O operations
-- Visualization rendering
-
-## Test Configuration
-
-Test settings are configured in `pytest.ini`:
-- Test discovery patterns
-- Test markers
-- Performance thresholds
-- Coverage settings
+- Add tests next to the module that you change, and cover the edge cases: NaN and nodata,
+  integer dtypes (`uint8`, `uint16`), empty or mismatched shapes, and invalid parameters.
+- Use the deterministic `rng` fixture (`numpy.random.default_rng(42)`) instead of global
+  random state.
+- Mark anything slower than a second or so with `@pytest.mark.performance`.
+- Plotting tests should close their figures (`plt.close(fig)`). The library itself never
+  closes figures.

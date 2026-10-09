@@ -87,7 +87,22 @@ CHANGE_LABELS: dict[int, str] = {
 }
 
 _THRESHOLD_METHODS = ("otsu", "std", "percentile")
-_DETECT_METHODS = ("difference", "ratio", "normalized_difference", "cva", "pca")
+
+
+class _DefaultThreshold(str):
+    """The default ``threshold="otsu"`` of :func:`detect_changes`.
+
+    It equals, prints and behaves as ``"otsu"``, but is a distinct object, so
+    ``method="irmad"`` can reject a threshold that was passed explicitly (even
+    ``"otsu"``) instead of silently ignoring it.
+    """
+
+    __slots__ = ()
+
+
+_OTSU_DEFAULT = _DefaultThreshold("otsu")
+_DETECT_METHODS = ("difference", "ratio", "normalized_difference", "cva", "pca", "irmad")
+_NORMALIZE_METHODS = ("histogram", "pif")
 _CHUNK = 1 << 20  # pixels per chunk for PCA statistics
 
 
@@ -186,7 +201,8 @@ class TransitionMatrix(NamedTuple):
         return np.divide(counts, denom, out=np.zeros_like(counts), where=denom > 0)
 
     def areas(self, pixel_size: Any) -> np.ndarray:
-        """Return the matrix in area units (squared CRS units, usually m²).
+        """Return the matrix in area units (m² for rasterio metadata; see
+        :func:`change_summary`).
 
         ``pixel_size`` accepts the same forms as in :func:`change_summary`.
         """
@@ -342,6 +358,24 @@ def _to_bool(mask: Any, name: str) -> tuple[np.ndarray, np.ndarray | None]:
     return mask != 0, invalid
 
 
+def _metres_per_unit(crs: Any) -> float:
+    """Metres per linear unit of a projected CRS (1.0 when unknown or ``None``).
+
+    Areas named ``*_m2`` must be m² also for CRSs in feet (e.g. US State Plane), the
+    same conversion :mod:`farq.elevation` applies to pixel sizes.
+    """
+    if crs is None:
+        return 1.0
+    from rasterio.errors import CRSError
+
+    try:
+        _, factor = crs.linear_units_factor
+    except (CRSError, AttributeError):
+        return 1.0  # engineering/local CRS without declared units: assume metres
+    factor = float(factor) if factor else 0.0
+    return factor if np.isfinite(factor) and factor > 0 else 1.0
+
+
 def _pixel_area(pixel_size: Any) -> float | None:
     """Area of one pixel from a size, (x, y) pair, Affine, rasterio meta or dataset."""
     if pixel_size is None:
@@ -376,7 +410,8 @@ def _pixel_area(pixel_size: Any) -> float | None:
                     "(e.g. UTM with farq.align_pair(..., dst_crs=...)) or pass the pixel "
                     "size in metres explicitly."
                 )
-        return _pixel_area(pixel_size["transform"])
+        area = _pixel_area(pixel_size["transform"])
+        return None if area is None else area * _metres_per_unit(crs) ** 2
     if all(hasattr(pixel_size, attr) for attr in ("a", "b", "d", "e")):  # affine.Affine
         t = pixel_size
         return abs(float(t.a) * float(t.e) - float(t.b) * float(t.d))
@@ -1145,9 +1180,11 @@ def change_summary(
     pixel_size : optional
         Pixel footprint, used for areas. One of: a number (square pixels), an
         ``(x, y)`` pair, an ``affine.Affine`` transform, a rasterio
-        ``meta``/``profile`` dict or an open rasterio dataset. Areas are in squared
-        CRS units — m² for projected CRSs such as UTM. A rasterio meta/dataset with a
-        geographic CRS raises ``ValueError``.
+        ``meta``/``profile`` dict or an open rasterio dataset. With metadata or a
+        dataset, areas are in m²: CRS units other than metres (e.g. US survey feet)
+        are converted, as in :mod:`farq.elevation`. A number, pair or bare Affine is
+        taken as metres. A rasterio meta/dataset with a geographic CRS raises
+        ``ValueError``.
     labels : mapping, optional
         Names for class values, e.g. :data:`CHANGE_LABELS`. Labelled classes
         appear even with zero pixels. Boolean masks default to
@@ -1252,7 +1289,7 @@ def detect_changes(
     before: np.ndarray,
     after: np.ndarray,
     method: str = "difference",
-    threshold: str | float = "otsu",
+    threshold: str | float = _OTSU_DEFAULT,
     *,
     k: float = 2.0,
     percentile: float = 95.0,
@@ -1260,6 +1297,8 @@ def detect_changes(
     connectivity: int = 8,
     fill_holes: bool | int = False,
     nodata: float | None = None,
+    alpha: float = 0.01,
+    normalize: str | None = None,
 ) -> ChangeResult:
     """Detect changes between two co-registered images in one call.
 
@@ -1269,14 +1308,18 @@ def detect_changes(
     ----------
     before, after : numpy.ndarray
         Images of the same area at two dates. ``(H, W)`` for single-band methods;
-        ``(H, W)`` or ``(bands, H, W)`` for ``"cva"`` and ``"pca"``.
-    method : {"difference", "ratio", "normalized_difference", "cva", "pca"}
+        ``(H, W)`` or ``(bands, H, W)`` for ``"cva"``, ``"pca"`` and ``"irmad"``.
+    method : {"difference", "ratio", "normalized_difference", "cva", "pca", "irmad"}
         Change measure. The magnitude is the absolute value of the signed measure:
         ``|after - before|``, ``|ln(after / before)|`` (recommended for SAR),
-        ``|normalized difference|``, the CVA vector length, or ``|PC1|`` of the
-        difference image.
+        ``|normalized difference|``, the CVA vector length, ``|PC1|`` of the
+        difference image, or the calibrated IR-MAD chi-square statistic
+        (:func:`farq.radiometry.irmad`), which is insensitive to linear brightness
+        and gain differences between the dates.
     threshold : {"otsu", "std", "percentile"} or float, default "otsu"
         Thresholding rule applied to the magnitude; see :func:`compute_threshold`.
+        Not used by ``"irmad"``, which thresholds its chi-square statistic at the
+        false-alarm rate ``alpha`` instead.
     k, percentile
         Parameters for the ``"std"`` and ``"percentile"`` rules.
     min_size : int, default 0
@@ -1287,6 +1330,16 @@ def detect_changes(
         Fill holes inside change regions (see :func:`clean_mask`).
     nodata : float, optional
         Sentinel value marking invalid pixels in the inputs.
+    alpha : float, default 0.01
+        For ``method="irmad"``: the expected fraction of unchanged pixels flagged as
+        change (chi-square test with one degree of freedom per band).
+    normalize : {"histogram", "pif"}, optional
+        Radiometrically normalize ``after`` to ``before`` first, so illumination,
+        exposure or sensor differences are not detected as change:
+        :func:`farq.radiometry.pif_normalize` (recommended: fitted on unchanged
+        pixels only) or :func:`farq.radiometry.histogram_match` (also reshapes the
+        distribution, so it can attenuate real change covering a noticeable part
+        of the scene).
 
     Returns
     -------
@@ -1310,8 +1363,34 @@ def detect_changes(
     """
     if method not in _DETECT_METHODS:
         raise ValueError(f"Unknown method {method!r}; use one of {_DETECT_METHODS}")
+    if normalize is not None and normalize not in _NORMALIZE_METHODS:
+        raise ValueError(f"Unknown normalize {normalize!r}; use one of {_NORMALIZE_METHODS}")
+    if method == "irmad" and threshold is not _OTSU_DEFAULT:
+        raise ValueError(
+            "method='irmad' is thresholded by its calibrated chi-square test; set the "
+            "false-alarm rate with alpha=... instead of threshold"
+        )
+    if method == "irmad" and (isinstance(alpha, bool) or not 0.0 < alpha < 1.0):
+        # Checked before the (possibly expensive) normalization.
+        raise ValueError(f"alpha must be in (0, 1), got {alpha!r}")
 
-    if method in ("cva", "pca"):
+    if normalize is not None:
+        from . import radiometry
+
+        if normalize == "histogram":
+            after = radiometry.histogram_match(after, before, nodata=nodata)
+        else:
+            after = radiometry.pif_normalize(after, before, nodata=nodata).normalized
+
+    if method == "irmad":
+        from scipy import stats
+
+        from .radiometry import irmad
+
+        res = irmad(before, after, nodata=nodata)
+        magnitude = res.chi2
+        t = float(stats.chi2.ppf(1.0 - alpha, res.mad_variates.shape[0]))
+    elif method in ("cva", "pca"):
         if method == "cva":
             magnitude = change_vector_analysis(before, after, nodata=nodata).magnitude
         else:
@@ -1327,7 +1406,8 @@ def detect_changes(
             magnitude = normalized_difference_change(before, after, nodata=nodata)
         np.abs(magnitude, out=magnitude)
 
-    t = compute_threshold(magnitude, threshold, k=k, percentile=percentile)
+    if method != "irmad":
+        t = compute_threshold(magnitude, threshold, k=k, percentile=percentile)
     valid = np.isfinite(magnitude)
     mask = magnitude > t
     if min_size > 1 or fill_holes:

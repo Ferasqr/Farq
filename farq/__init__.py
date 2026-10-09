@@ -15,6 +15,16 @@ change
     Change detection: differencing, ratios, CVA, PCA, thresholds, transitions.
 georef
     GCP georeferencing, grid alignment and image co-registration.
+masking
+    Cloud/shadow/snow masks from Landsat QA_PIXEL, Sentinel-2 SCL and HLS Fmask.
+radiometry
+    Relative radiometric normalization between dates and calibrated IR-MAD.
+elevation
+    DEM differencing, DEM co-registration, cut/fill and stockpile volumes.
+tiling
+    Out-of-core, block-wise processing of rasters larger than memory.
+vector
+    Polygonize change masks and export GeoJSON, GeoPackage, Shapefile, FlatGeobuf.
 analysis
     Water-body statistics and shape metrics.
 ml
@@ -30,16 +40,21 @@ from __future__ import annotations
 import importlib
 from typing import TYPE_CHECKING, Any
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 _SUBMODULES = (
     "analysis",
     "change",
     "core",
+    "elevation",
     "georef",
     "indices",
+    "masking",
     "ml",
+    "radiometry",
+    "tiling",
     "utils",
+    "vector",
     "visualization",
 )
 
@@ -138,6 +153,70 @@ for _module, _names in {
         "analyze_water_clusters",
         "optimize_clustering",
     ),
+    "elevation": (
+        "DEMCoregistration",
+        "StockpileResult",
+        "VerticalOffset",
+        "VolumeResult",
+        "aspect",
+        "coregister_dem",
+        "elevation_change",
+        "hillshade",
+        "level_of_detection",
+        "shift_dem",
+        "significant_change",
+        "slope",
+        "stockpile_volume",
+        "vertical_offset",
+        "volume_change",
+    ),
+    "masking": (
+        "DEFAULT_S2_BAD_CLASSES",
+        "SCL_NAMES",
+        "Confidence",
+        "HLSFmask",
+        "LandsatQA",
+        "MaskOverlap",
+        "SCLClass",
+        "apply_mask",
+        "buffer_mask",
+        "clear_fraction",
+        "combine_masks",
+        "decode_bits",
+        "decode_landsat_qa",
+        "hls_fmask_mask",
+        "landsat_c2_scale",
+        "landsat_qa_mask",
+        "landsat_radsat_mask",
+        "sentinel2_cloud_probability_mask",
+        "sentinel2_l2a_scale",
+        "sentinel2_scl_mask",
+        "upsample_mask",
+        "valid_overlap",
+    ),
+    "radiometry": (
+        "IRMADResult",
+        "NormalizationResult",
+        "histogram_match",
+        "irmad",
+        "irmad_change",
+        "linear_normalize",
+        "pif_normalize",
+    ),
+    "tiling": (
+        "Block",
+        "detect_changes_file",
+        "index_file",
+        "iter_windows",
+        "map_blocks",
+        "summarize_file",
+    ),
+    "vector": (
+        "changes_to_vector",
+        "polygonize",
+        "to_geojson",
+        "write_vector",
+    ),
     "visualization": (
         "plot",
         "compare",
@@ -192,7 +271,21 @@ def __dir__() -> list[str]:
 
 
 if TYPE_CHECKING:  # pragma: no cover - static analysers and IDE completion
-    from . import analysis, change, core, georef, indices, ml, utils, visualization
+    from . import (
+        analysis,
+        change,
+        core,
+        elevation,
+        georef,
+        indices,
+        masking,
+        ml,
+        radiometry,
+        tiling,
+        utils,
+        vector,
+        visualization,
+    )
     from .analysis import (
         calculate_shape_metrics,
         get_water_bodies,
@@ -225,6 +318,23 @@ if TYPE_CHECKING:  # pragma: no cover - static analysers and IDE completion
         transition_matrix,
     )
     from .core import read, resample, validate_bands, write
+    from .elevation import (
+        DEMCoregistration,
+        StockpileResult,
+        VerticalOffset,
+        VolumeResult,
+        aspect,
+        coregister_dem,
+        elevation_change,
+        hillshade,
+        level_of_detection,
+        shift_dem,
+        significant_change,
+        slope,
+        stockpile_volume,
+        vertical_offset,
+        volume_change,
+    )
     from .georef import (
         GCPResiduals,
         align,
@@ -259,6 +369,30 @@ if TYPE_CHECKING:  # pragma: no cover - static analysers and IDE completion
         tgi,
         vari,
     )
+    from .masking import (
+        DEFAULT_S2_BAD_CLASSES,
+        SCL_NAMES,
+        Confidence,
+        HLSFmask,
+        LandsatQA,
+        MaskOverlap,
+        SCLClass,
+        apply_mask,
+        buffer_mask,
+        clear_fraction,
+        combine_masks,
+        decode_bits,
+        decode_landsat_qa,
+        hls_fmask_mask,
+        landsat_c2_scale,
+        landsat_qa_mask,
+        landsat_radsat_mask,
+        sentinel2_cloud_probability_mask,
+        sentinel2_l2a_scale,
+        sentinel2_scl_mask,
+        upsample_mask,
+        valid_overlap,
+    )
     from .ml import (
         ModelIntegrityError,
         analyze_water_clusters,
@@ -272,6 +406,23 @@ if TYPE_CHECKING:  # pragma: no cover - static analysers and IDE completion
         save_model,
         train_classifier,
     )
+    from .radiometry import (
+        IRMADResult,
+        NormalizationResult,
+        histogram_match,
+        irmad,
+        irmad_change,
+        linear_normalize,
+        pif_normalize,
+    )
+    from .tiling import (
+        Block,
+        detect_changes_file,
+        index_file,
+        iter_windows,
+        map_blocks,
+        summarize_file,
+    )
     from .utils import (
         count_nonzero,
         max,
@@ -284,6 +435,12 @@ if TYPE_CHECKING:  # pragma: no cover - static analysers and IDE completion
         sum,
         unique,
         validate_array,
+    )
+    from .vector import (
+        changes_to_vector,
+        polygonize,
+        to_geojson,
+        write_vector,
     )
     from .visualization import (
         changes,

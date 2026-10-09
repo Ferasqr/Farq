@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "farq"
-version = "0.2.0"
+version = "0.3.0"
 description = "A Python library for raster change detection and water-body analysis"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -36,6 +36,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+vector = [
+    "pyogrio>=0.7",
+    # shapely 2.1 (coverage_simplify for preserve_topology=True) needs Python >= 3.10.
+    "shapely>=2.1; python_version >= '3.10'",
+    "shapely>=2.0; python_version < '3.10'",
+]
 test = ["pytest>=7", "pytest-cov>=4", "psutil>=5"]
 dev = ["farq[test]", "ruff>=0.6", "mypy>=1.8", "build>=1.0", "twine>=5"]
 

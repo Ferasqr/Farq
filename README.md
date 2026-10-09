@@ -16,20 +16,49 @@ and handles the steps from reading them to reporting the change in km²: reading
 with nodata as NaN, putting both dates on one pixel grid (including GCP-only drone
 orthomosaics and residual sub-pixel shifts), computing spectral or RGB indices, measuring
 and thresholding change, cleaning the change mask, and summarizing it as areas, water-body
-statistics or plots. Farq is built on NumPy, SciPy, rasterio/GDAL, scikit-learn and
-matplotlib.
+statistics or plots. It also masks clouds from the products' quality bands, normalizes
+radiometry between dates, measures elevation change and volumes from DEMs, processes
+rasters larger than memory, and exports change polygons to GIS formats. Farq is built on
+NumPy, SciPy, rasterio/GDAL, scikit-learn and matplotlib.
 
 ## Features
 
 **Change detection** (`farq.change`)
-- One-call `detect_changes` with five change measures: difference, log-ratio (suits SAR),
-  normalized difference, change vector analysis (CVA) and PCA
-- Automatic thresholds (Otsu, mean + k·std, percentile) or a fixed value
+- One-call `detect_changes` with six change measures: difference, log-ratio (suits SAR),
+  normalized difference, change vector analysis (CVA), PCA and calibrated IR-MAD
+- Automatic thresholds (Otsu, mean + k·std, percentile) or a fixed value; IR-MAD is
+  thresholded at a chosen false-alarm rate (`alpha`)
+- Optional radiometric normalization of the later date (`normalize="pif"`)
 - Mask cleanup: remove small patches and fill holes (`clean_mask`)
 - Categorical change: gained / lost / stable maps (`classify_change`) and from-to
   transition matrices for classified maps (`transition_matrix`)
 - `change_summary`: pixel counts, percentages and areas in m² and km², returned as
   JSON-serializable dicts
+
+**Cloud and quality masking** (`farq.masking`)
+- Masks from Landsat Collection 2 `QA_PIXEL` and `QA_RADSAT`, Sentinel-2 SCL and cloud
+  probability, and HLS Fmask, with buffering, union and clear-overlap checks
+- Digital numbers to reflectance, including the Sentinel-2 baseline 04.00 offset
+
+**Radiometric normalization** (`farq.radiometry`)
+- Histogram matching, and linear or automatic pseudo-invariant-feature (PIF) normalization
+- IR-MAD change detection that ignores gain and offset differences between dates, with a
+  calibrated false-alarm rate
+
+**Elevation and volumes** (`farq.elevation`)
+- DEMs of difference, Nuth & Kääb co-registration and level of detection
+- Cut/fill volumes with (spatially correlated) uncertainty, and stockpile volumes from a
+  single drone survey; slope, aspect and hillshade
+
+**Large rasters** (`farq.tiling`)
+- Block-wise, file-to-file change detection, indices, statistics and custom functions
+  for rasters larger than memory, in parallel; global thresholds and exact `min_size`
+  across block borders
+
+**GIS export** (`farq.vector`)
+- Change masks and class maps to polygons with area, perimeter and centroid
+- GeoJSON with no extra dependency; GeoPackage, Shapefile and FlatGeobuf with
+  `farq[vector]`
 
 **Spectral and RGB indices** (`farq.indices`)
 - Multispectral: NDWI, MNDWI, NDVI, EVI, SAVI, NDBI, NBR, NDMI
@@ -81,6 +110,13 @@ pip install farq
 
 Farq requires Python 3.9 or newer. rasterio wheels include GDAL, so no separate GDAL
 installation is needed on most platforms.
+
+To export polygons to GeoPackage, Shapefile or FlatGeobuf, install the optional `vector`
+extra (pyogrio and shapely). GeoJSON export works without it.
+
+```bash
+pip install "farq[vector]"
+```
 
 ## Quick start
 
@@ -195,6 +231,109 @@ print(f"Vegetation change: {summary['changed_area_m2']:.1f} m² "
       f"({summary['changed_percent']:.2f}% of the overlap)")
 ```
 
+## More recipes
+
+Each recipe below is self-contained. The guides linked from each one explain the methods
+and options in detail.
+
+### Large rasters
+
+`farq.tiling` runs the change-detection pipeline file to file, block by block, so memory
+depends on the block size and not on the raster size. The inputs must be on one grid.
+[Guide](https://github.com/ferasqr/farq/blob/main/docs/tiling.md).
+
+```python
+import farq
+
+summary = farq.detect_changes_file(
+    "ndwi_2020.tif", "ndwi_2024.tif", "change.tif",  # co-registered rasters
+    threshold="otsu", min_size=10, n_jobs=4,
+)
+print(f"{summary['changed_area_km2']:.2f} km² changed (threshold {summary['threshold']:.3f})")
+```
+
+### Export to GIS
+
+`changes_to_vector` turns a change mask or a gained/lost class map into polygons with
+area, perimeter and centroid attributes. The format follows the file extension:
+`.geojson`, or `.gpkg`, `.shp` and `.fgb` with `farq[vector]`.
+[Guide](https://github.com/ferasqr/farq/blob/main/docs/vector.md).
+
+```python
+import farq
+
+classes, meta = farq.read("water_change_classes.tif", masked=True)  # from classify_change
+polygons = farq.changes_to_vector(classes, meta, "water_change.gpkg", min_area=900)
+farq.to_geojson(polygons, "water_change.geojson", crs=meta)          # WGS 84 lon/lat
+print(len(polygons), polygons[0]["properties"]["label"], polygons[0]["properties"]["area_m2"])
+```
+
+### Cloud masking
+
+Clouds and shadows in one date are the most common false change. `farq.masking` decodes
+the quality bands of Landsat Collection 2, Sentinel-2 L2A and HLS, and `apply_mask` sets
+the flagged pixels to NaN so they are never counted as change.
+[Guide](https://github.com/ferasqr/farq/blob/main/docs/masking.md).
+
+```python
+import farq
+
+scene = "LC09_L2SP_044034_20240715_20240716_02_T1"
+qa, meta = farq.read(f"{scene}_QA_PIXEL.TIF")
+nir, _ = farq.read(f"{scene}_SR_B5.TIF")
+
+clouds = farq.landsat_qa_mask(qa)  # fill, cloud, cloud shadow, cirrus
+clouds = farq.buffer_mask(clouds, distance=90, pixel_size=meta)  # grow by 90 m
+nir = farq.apply_mask(farq.landsat_c2_scale(nir), clouds)  # reflectance, NaN where masked
+print(f"{farq.clear_fraction(clouds):.0%} of the scene is clear")
+```
+
+### Radiometric normalization
+
+Sun angle, haze, exposure and sensor calibration differ between acquisitions and show up
+as change. `normalize="pif"` fits a per-band gain and offset on automatically selected
+unchanged pixels first. `method="irmad"` ignores such differences altogether and is
+thresholded at a false-alarm rate `alpha`.
+[Guide](https://github.com/ferasqr/farq/blob/main/docs/radiometry.md).
+
+```python
+import numpy as np
+import farq
+
+bands = ("green", "red", "nir")
+stack_20 = np.stack([farq.read(f"{b}_2020.tif", masked=True)[0] for b in bands])
+stack_24 = np.stack([farq.read(f"{b}_2024.tif", masked=True)[0] for b in bands])
+_, meta_20 = farq.read("nir_2020.tif")
+_, meta_24 = farq.read("nir_2024.tif")
+before, after, meta = farq.align_pair(stack_20, meta_20, stack_24, meta_24)
+
+cva = farq.detect_changes(before, after, method="cva", normalize="pif", min_size=5)
+irmad = farq.detect_changes(before, after, method="irmad", alpha=0.01, min_size=5)
+print(f"CVA: {cva.summary(pixel_size=meta)['changed_area_km2']:.2f} km², "
+      f"IR-MAD: {irmad.summary(pixel_size=meta)['changed_area_km2']:.2f} km²")
+```
+
+### Drone volumes
+
+Cut and fill between two drone surveys (DSMs in metres): co-register the surfaces,
+ignore changes below the level of detection, and report volumes with an uncertainty.
+[Guide](https://github.com/ferasqr/farq/blob/main/docs/elevation.md).
+
+```python
+import farq
+
+dsm_23, meta_23 = farq.read("dsm_2023.tif", masked=True)
+dsm_24, meta_24 = farq.read("dsm_2024.tif", masked=True)
+before, after, meta = farq.align_pair(dsm_23, meta_23, dsm_24, meta_24)
+
+reg = farq.coregister_dem(before, after, meta)  # better: stable_mask=<unchanged ground>
+dod = farq.elevation_change(before, reg.dem)    # after - before, in metres
+lod = farq.level_of_detection(reg.nmad_after, 0)
+vol = farq.volume_change(dod, meta, lod=lod, sigma=reg.nmad_after, correlation_length=5.0)
+print(f"cut {vol.cut_m3:.1f} m³, fill {vol.fill_m3:.1f} m³, "
+      f"net {vol.net_m3:+.1f} ± {vol.uncertainty_m3:.1f} m³")
+```
+
 ## Saving and loading models
 
 `save_model` writes the model file and a `<file>.sha256` sidecar, and it returns the
@@ -237,12 +376,22 @@ water = farq.predict_raster(model, features)  # -1 where any feature is NaN
   change measures, thresholds, mask cleanup, transition matrices
 - [Drone imagery guide](https://github.com/ferasqr/farq/blob/main/docs/drone.md): GCPs,
   rectification, alignment and co-registration
+- [Cloud masking guide](https://github.com/ferasqr/farq/blob/main/docs/masking.md):
+  Landsat, Sentinel-2 and HLS quality bands
+- [Radiometric normalization guide](https://github.com/ferasqr/farq/blob/main/docs/radiometry.md):
+  histogram matching, PIF normalization and calibrated IR-MAD
+- [Elevation guide](https://github.com/ferasqr/farq/blob/main/docs/elevation.md): DEMs of
+  difference, cut/fill and stockpile volumes
+- [Large rasters guide](https://github.com/ferasqr/farq/blob/main/docs/tiling.md):
+  out-of-core, block-wise processing
+- [Vector export guide](https://github.com/ferasqr/farq/blob/main/docs/vector.md):
+  polygons, GeoJSON, GeoPackage, Shapefile and FlatGeobuf
 - [Examples](https://github.com/ferasqr/farq/blob/main/docs/examples.md): recipes for
   indices, water analysis, ML and plotting
 - [Testing](https://github.com/ferasqr/farq/blob/main/docs/testing.md): running the test
   suite, linting and building
-- [Changelog](https://github.com/ferasqr/farq/blob/main/CHANGELOG.md): includes the
-  0.1 to 0.2 migration notes
+- [Changelog](https://github.com/ferasqr/farq/blob/main/CHANGELOG.md): what is new in
+  0.3, and the 0.1 to 0.2 migration notes
 
 ## Contributing
 
@@ -251,7 +400,7 @@ Contributions are welcome. To set up a development environment:
 ```bash
 git clone https://github.com/ferasqr/farq.git
 cd farq
-pip install -e ".[dev]"
+pip install -e ".[dev,vector]"
 
 python -m pytest                    # test suite (performance tests are skipped)
 ruff check farq tests               # lint

@@ -659,9 +659,15 @@ def calculate_indices(
         ValueError: If an index name is unknown or a required band is missing.
 
     Example:
-        >>> bands = {"red": red, "nir": nir, "green": green}
+        >>> import numpy as np
+        >>> bands = {
+        ...     "red": np.array([[1000, 2000]], dtype=np.uint16),
+        ...     "nir": np.array([[3000, 2000]], dtype=np.uint16),
+        ...     "green": np.array([[1500, 2500]], dtype=np.uint16),
+        ... }
         >>> result = calculate_indices(bands, ["ndvi", "ndwi"], reflectance_scale=10000)
-        >>> ndvi_array = result["ndvi"]
+        >>> result["ndvi"].round(2).tolist()
+        [[0.5, 0.0]]
     """
     names = [indices] if isinstance(indices, str) else list(indices)
 

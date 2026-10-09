@@ -9,6 +9,11 @@ copied from the code. Parameters after `*` are keyword-only.
 - [farq.indices](#farqindices): spectral and RGB indices
 - [farq.change](#farqchange): change detection
 - [farq.georef](#farqgeoref): GCPs, rectification, alignment, co-registration
+- [farq.masking](#farqmasking): cloud, shadow and quality masks
+- [farq.radiometry](#farqradiometry): radiometric normalization and IR-MAD
+- [farq.elevation](#farqelevation): DEM differencing, co-registration and volumes
+- [farq.tiling](#farqtiling): out-of-core processing of large rasters
+- [farq.vector](#farqvector): polygons and GIS export
 - [farq.analysis](#farqanalysis): water statistics and shape metrics
 - [farq.ml](#farqml): machine learning
 - [farq.visualization](#farqvisualization): plotting
@@ -26,7 +31,10 @@ copied from the code. Parameters after `*` are keyword-only.
 | Array layout | `(bands, rows, cols)` everywhere except `farq.ml`, which uses `(rows, cols, bands)`. |
 | GCP pixels | GDAL convention: `(row, col) = (0, 0)` is the top-left **corner** of the image, and the centre of the first pixel is `(0.5, 0.5)`. |
 | Co-registration | `coregister` estimates a **translation only** (no rotation, scale or local distortion). |
-| Units | `change_summary` reports areas in m² (squared CRS units) and km². `farq.analysis` takes `pixel_size` in metres and returns areas in **km²** and per-body perimeters in **km**. `ml.analyze_water_clusters` returns areas in **m²** and perimeters in **m**. |
+| Units | `change_summary`, `detect_changes_file` and `farq.vector` report areas in m² and km², converting from the CRS's linear unit (e.g. US survey feet) when areas come from raster metadata; a plain `pixel_size` number is taken as metres. `farq.analysis` takes `pixel_size` in metres and returns areas in **km²** and per-body perimeters in **km**. `ml.analyze_water_clusters` returns areas in **m²** and perimeters in **m**. `farq.elevation` takes elevations in metres and returns m, m² and m³. `farq.vector` polygon attributes `area_m2` and `perimeter_m` are in metres; coordinates and `simplify` stay in CRS units. |
+| Geographic CRS | Areas, volumes, slopes, polygon metrics and ground distances need a projected CRS such as UTM. Metadata in a geographic CRS (degrees), in any spelling (a `CRS`, `"EPSG:4326"`, `4326`), raises `ValueError` in `change_summary` and `ChangeResult.summary`, `pixel_area`, `detect_changes_file` (unless `pixel_size=` is given), `polygonize` and `changes_to_vector`, every `farq.elevation` function that takes `meta`, and `buffer_mask(distance=...)`. Reproject first (`align_pair(..., dst_crs=...)`) or pass the pixel size in metres where accepted. |
+| Masks | Quality masks from `farq.masking` are `True` where a pixel is **masked** (unusable). Change masks are `True` where a pixel changed. |
+| Large rasters | `farq.tiling` functions work file to file, block by block; their inputs must share one grid. |
 | Figures | Plot functions return a `matplotlib.figure.Figure`, never call `plt.show()`, and never close other figures. |
 | Inputs | Input arrays are never modified in place. |
 
@@ -192,7 +200,7 @@ are processed as `float32` (`float64` for 32/64-bit integers).
 ```text
 detect_changes(before, after, method="difference", threshold="otsu", *, k=2.0,
                percentile=95.0, min_size=0, connectivity=8, fill_holes=False,
-               nodata=None) -> ChangeResult
+               nodata=None, alpha=0.01, normalize=None) -> ChangeResult
 ```
 
 Runs the whole change-detection pipeline: magnitude, then threshold, then cleanup.
@@ -203,11 +211,26 @@ Runs the whole change-detection pipeline: magnitude, then threshold, then cleanu
   - `"normalized_difference"`: `|(after - before) / (after + before)|`
   - `"cva"`: change-vector length
   - `"pca"`: `|PC1|` of the difference image
+  - `"irmad"`: the calibrated IR-MAD chi-square statistic ([`irmad`](#ir-mad)), which
+    ignores per-band gain and offset differences between the dates
 
-  `"cva"` and `"pca"` accept `(rows, cols)` or `(bands, rows, cols)` input. The other
-  methods need 2-D input (a leading band axis of size 1 is accepted).
+  `"cva"`, `"pca"` and `"irmad"` accept `(rows, cols)` or `(bands, rows, cols)` input.
+  The other methods need 2-D input (a leading band axis of size 1 is accepted).
 - `threshold`: `"otsu"`, `"std"` (mean + `k`·std), `"percentile"` (the `percentile`-th
-  value) or a number. See [`compute_threshold`](#compute_threshold).
+  value) or a number. See [`compute_threshold`](#compute_threshold). Not used with
+  `"irmad"`: passing a `threshold` with `method="irmad"` raises `ValueError`.
+- `alpha` (default 0.01, in (0, 1)): for `"irmad"` only, the false-alarm rate. The
+  statistic is thresholded at the `1 - alpha` quantile of the chi-square distribution
+  with one degree of freedom per band, so about a fraction `alpha` of the unchanged
+  pixels are flagged (under Gaussian no-change noise). `ChangeResult.threshold` holds
+  that quantile.
+- `normalize`: `None` (default), `"pif"` or `"histogram"`. Radiometrically normalizes
+  `after` to `before` before the magnitude is computed, so illumination, exposure or
+  sensor differences are not detected as change. `"pif"` runs
+  [`pif_normalize`](#normalization) with its defaults and is recommended, because it is
+  fitted on unchanged pixels only. `"histogram"` runs `histogram_match`, which also
+  reshapes the distribution and can attenuate real change that covers a noticeable part
+  of the scene.
 - `min_size`, `connectivity` (4 or 8) and `fill_holes` (bool or maximum hole size in
   pixels) are passed to [`clean_mask`](#clean_mask).
 
@@ -308,7 +331,7 @@ transition_matrix(class_before, class_after, classes=None, *, nodata=None) -> Tr
   Properties and methods:
   - `.total` and `.changed`: off-diagonal sum
   - `.normalized(by="all" | "before" | "after")`: fractions
-  - `.areas(pixel_size)`: squared CRS units
+  - `.areas(pixel_size)`: m² (converted from the CRS unit when `pixel_size` is metadata)
 
 ### `change_summary`
 
@@ -472,6 +495,512 @@ pixel_area(meta) -> float
   rotation. For GCP-only metadata, it estimates them from an affine fit through the GCPs.
 - `pixel_area` returns the area of one pixel in squared CRS units, and raises
   `ValueError` for a missing or geographic CRS.
+
+---
+
+## farq.masking
+
+Cloud, shadow, snow and quality masks from the quality bands of Landsat Collection 2,
+Sentinel-2 L2A and HLS v2.0. Guide: [Cloud and quality masking](masking.md).
+
+- Masks are boolean arrays where **`True` means masked** (unusable).
+- Quality bands are integer arrays. Float quality bands (e.g. read with `masked=True`)
+  are accepted when every finite value is a whole number. NaN and masked entries are
+  nodata and always come out masked.
+- For a change pair, mask the **union** of both dates (`combine_masks`).
+- Inputs are never modified, and no `RuntimeWarning` is emitted.
+
+### Building masks
+
+```text
+landsat_qa_mask(qa_pixel, *, cloud=True, shadow=True, cirrus=True, snow=False,
+                dilated=True, fill=True, water=False, min_confidence=None) -> ndarray[bool]
+landsat_radsat_mask(qa_radsat, *, sensor="oli", bands=None, terrain_occlusion=True,
+                    dropped_pixel=True) -> ndarray[bool]
+sentinel2_scl_mask(scl, *, classes=DEFAULT_S2_BAD_CLASSES, target_shape=None)
+    -> ndarray[bool]
+sentinel2_cloud_probability_mask(probability, threshold=50, *, target_shape=None)
+    -> ndarray[bool]
+hls_fmask_mask(fmask, *, cloud=True, adjacent=True, shadow=True, snow=False, water=False,
+               cirrus=False, aerosol="high", fill=True) -> ndarray[bool]
+decode_bits(qa, bit, width=1) -> ndarray
+decode_landsat_qa(qa_pixel) -> dict[str, ndarray]
+```
+
+- `landsat_qa_mask` decodes `QA_PIXEL` (Landsat 4-9). The single-bit flags are
+  high-confidence detections. `min_confidence` (`"low"`, `"medium"`, `"high"` or 1-3)
+  also masks pixels whose cloud confidence is at least that level. `"low"` masks almost
+  every clear pixel, because CFMask gives low confidence to most of them.
+- `landsat_radsat_mask` decodes `QA_RADSAT`. `sensor` is `"oli"` (Landsat 8/9), `"tm"`
+  (4/5) or `"etm"` (7). `bands` limits saturation to some band numbers (e.g. `[3, 5]`);
+  `None` uses every band.
+- `sentinel2_scl_mask` masks Scene Classification classes. `classes` takes codes,
+  `SCLClass` members or names from `SCL_NAMES` (`"cloud_high"`, `"snow_ice"`, ...).
+  The default `DEFAULT_S2_BAD_CLASSES` is no data, saturated/defective, cloud shadow,
+  cloud medium and high probability and thin cirrus (0, 1, 3, 8, 9, 10). Values outside
+  0-11 raise `ValueError`.
+- `sentinel2_cloud_probability_mask` masks `MSK_CLDPRB` pixels with
+  `probability >= threshold` (percent).
+- `target_shape=(rows, cols)` repeats a 20 m or 60 m mask onto the 10 m grid of the same
+  tile (exact integer factor; see `upsample_mask`).
+- `hls_fmask_mask` decodes the HLS v2.0 `Fmask`. `aerosol` masks pixels whose aerosol
+  level is at least `"low"`, `"moderate"` or `"high"` (or 1-3); `None` ignores it.
+  `fill=True` masks the fill value 255.
+- `decode_bits` returns `(qa >> bit) & (2**width - 1)` in the smallest unsigned dtype
+  that holds it. `decode_landsat_qa` returns every `QA_PIXEL` field: the booleans
+  `fill`, `dilated_cloud`, `cirrus`, `cloud`, `cloud_shadow`, `snow`, `clear`, `water`
+  and the 0-3 confidences `cloud_confidence`, `cloud_shadow_confidence`,
+  `snow_ice_confidence`, `cirrus_confidence`.
+
+### Combining and applying masks
+
+```text
+buffer_mask(mask, pixels=None, *, distance=None, pixel_size=None) -> ndarray[bool]
+combine_masks(*masks) -> ndarray[bool]
+upsample_mask(mask, target_shape) -> ndarray
+apply_mask(data, mask, *, fill=nan) -> ndarray
+clear_fraction(mask, valid=None) -> float
+valid_overlap(mask_before, mask_after, *, footprint=None) -> MaskOverlap
+```
+
+- `buffer_mask` grows a 2-D mask by a radius in `pixels`, or by a ground `distance`
+  with `pixel_size` (a number, an `(x, y)` pair, an `affine.Affine` or rasterio
+  metadata). Give exactly one of the two. Every pixel whose centre is within the radius
+  of a masked pixel centre is masked (an exact Euclidean distance transform, so the cost
+  does not grow with the radius). A `distance` with metadata in a geographic CRS raises
+  `ValueError`.
+- `combine_masks` is the union of masks of the same shape; `None` entries are skipped.
+- `upsample_mask` repeats each pixel by an exact integer factor. A `target_shape` that is
+  not an integer multiple raises `ValueError`.
+- `apply_mask` returns a float copy of `(rows, cols)` or `(bands, rows, cols)` data with
+  masked pixels set to `fill` (NaN). The mask is `(rows, cols)` (applied to every band)
+  or has the shape of `data`. Output is `float32` for integers of up to 16 bits and for
+  `float32`, otherwise `float64`.
+- `clear_fraction` returns the fraction of (`valid`) pixels that are not masked, or NaN
+  if there are none.
+- `valid_overlap` returns `MaskOverlap(valid, n_valid, n_total, fraction, before_clear,
+  after_clear)`, a `NamedTuple`. `valid` is `True` where both dates are usable; pass it
+  as `valid=` to `change_summary` or `classify_change`.
+
+### Scaling digital numbers
+
+```text
+landsat_c2_scale(dn, kind="sr", *, fill=0) -> ndarray
+sentinel2_l2a_scale(dn, offset=-1000, quantification=10000, *, nodata=0) -> ndarray
+```
+
+- `landsat_c2_scale`: Collection 2 Level-2 surface reflectance (`kind="sr"`,
+  `DN * 0.0000275 - 0.2`) or surface temperature in kelvin (`kind="st"`,
+  `DN * 0.00341802 + 149.0`). Not for Collection 1.
+- `sentinel2_l2a_scale`: `(DN + offset) / quantification`. Products from processing
+  baseline 04.00 (25 January 2022) onwards have `BOA_ADD_OFFSET = -1000`; pass
+  `offset=0` for older products.
+- Both return `float32` (`float64` for 32/64-bit or `float64` input) with the fill or
+  nodata digital number (`None` disables it) and NaN inputs as NaN. Values are not
+  clipped.
+
+### Constants
+
+`LandsatQA` (`QA_PIXEL` bit positions), `Confidence` (`NONE`, `LOW`, `MEDIUM`, `HIGH` =
+0-3), `SCLClass` (SCL classes 0-11) and `SCL_NAMES` (class to name), `HLSFmask` (`Fmask`
+bit positions) are `IntEnum`s or dicts. `DEFAULT_S2_BAD_CLASSES` is a `frozenset` of
+`SCLClass` members.
+
+---
+
+## farq.radiometry
+
+Relative radiometric normalization between dates or flights, and calibrated IR-MAD
+change detection. Guide: [Radiometric normalization](radiometry.md).
+
+- Stacks are `(bands, rows, cols)`; a 2-D array is one band.
+- NaN, ±inf, `nodata` and masked entries are invalid: they are excluded from every fit
+  and come out as NaN.
+- Outputs are `float32` for 8/16-bit integer and `float32` inputs, otherwise `float64`.
+  Statistics are accumulated in `float64`. Results are deterministic.
+- Normalize the later image to the earlier one (`source=after`, `reference=before`), so
+  that change magnitudes stay in "before" units.
+
+### Normalization
+
+```text
+histogram_match(source, reference, *, valid=None, n_quantiles=None, nodata=None)
+    -> ndarray
+linear_normalize(source, reference, *, mask=None, method="ols", nodata=None)
+    -> NormalizationResult
+pif_normalize(source, reference, *, method="irmad", regression="orthogonal", valid=None,
+              min_prob=0.9, n_sigma=2.0, percentile=25.0, min_pixels=50, max_iter=50,
+              tol=1e-06, nodata=None) -> NormalizationResult
+```
+
+- `histogram_match` maps each band through the empirical CDFs (quantile mapping), so
+  the output takes the reference's histogram. The images need not be co-registered or
+  the same size. `valid` (same-shape images only) selects the pixels that build both
+  distributions. `n_quantiles` (at least 2) gives a smoother piecewise-linear mapping.
+  It forces the distributions to agree, so it can attenuate real change that covers a
+  large part of the scene.
+- `linear_normalize` fits a per-band gain and offset on the `mask` pixels (default: all
+  valid pixels). `method`: `"ols"`, `"orthogonal"` (total least squares, noise in both
+  images), `"theil_sen"` (robust to about 29 % outliers) or `"mean_std"`.
+- `pif_normalize` selects pseudo-invariant pixels automatically, then fits them with
+  `regression`. `method`:
+  - `"irmad"` (default): IR-MAD no-change probability above `min_prob`. Best with three
+    or more bands.
+  - `"pca"`: within `n_sigma` robust standard deviations of each band's major axis,
+    refitted iteratively. Suits one or two bands.
+  - `"percentile"`: the `percentile` % of pixels with the smallest robust Theil–Sen
+    residuals. Breaks down when more than about 29 % of the scene changed.
+
+  `valid` limits the pixels allowed as PIFs. Fewer than `min_pixels` PIFs raises
+  `ValueError`.
+
+`NormalizationResult` is a `NamedTuple`. The model is
+`normalized[i] = gains[i] * source[i] + offsets[i]`:
+
+- `normalized`: `source` on the reference's scale, NaN where `source` is invalid
+- `gains`, `offsets`: `float64` arrays of shape `(bands,)`
+- `invariant_mask`: bool `(rows, cols)`, the pixels the fit used
+- `r2`, `rmse`: per band, on the fit pixels (`rmse` in reference units). A low `r2`
+  means no linear relation exists; use `histogram_match` instead.
+- `n_invariant`: number of fit pixels
+- `.apply(image, *, nodata=None)`: applies the same gains and offsets to another image with
+  the same bands, for example the full-resolution raster after a fit on a decimated read
+
+### IR-MAD
+
+```text
+irmad(before_stack, after_stack, *, max_iter=50, tol=1e-06, valid=None, nodata=None)
+    -> IRMADResult
+irmad_change(before_stack, after_stack, *, alpha=0.01, max_iter=50, tol=1e-06,
+             valid=None, nodata=None) -> ndarray[bool]
+```
+
+- `irmad` is Nielsen's (2007) iteratively reweighted Multivariate Alteration Detection.
+  Its statistic does not change under any per-band gain or offset, so exposure and
+  calibration differences are not detected as change. Inputs are co-registered
+  `(bands, rows, cols)` stacks (or 2-D images); a pixel is invalid if any band in either
+  stack is. `valid` limits the pixels used to estimate the statistics; outputs are still
+  computed for every valid pixel. `max_iter=1` gives plain MAD.
+- `IRMADResult` is a `NamedTuple`:
+  - `mad_variates`: `(bands, rows, cols)`, ordered by ascending canonical correlation,
+    so `mad_variates[0]` carries the most change
+  - `chi2`: `(rows, cols)` change statistic, chi-square distributed with `bands` degrees
+    of freedom on unchanged pixels
+  - `no_change_prob`: its p-value
+  - `canonical_correlations` (ascending), `n_iter`, `converged`
+- `irmad_change` flags pixels with `chi2 > chi2.ppf(1 - alpha, bands)`, so about a
+  fraction `alpha` of the unchanged pixels are flagged. It returns a bool `(rows, cols)`
+  mask, `False` where invalid.
+- **Calibration.** The published scheme uses the *weighted* MAD variances, which
+  under-estimate the no-change variances, so the false-alarm rate far exceeds `alpha`
+  (over 50 % at `alpha=0.01` in simulations). Farq multiplies the statistic by the exact
+  consistency factor for this weighting, so `alpha` is the false-alarm rate under
+  Gaussian no-change noise. Misregistration and other heavy-tailed differences still
+  raise it.
+- Raises `ValueError` with too few valid pixels (at least `max(10, 2 * bands + 2)`), a
+  singular band covariance (constant or duplicated bands), or when `after` is an exact
+  linear function of `before`.
+
+---
+
+## farq.elevation
+
+DEM differencing, DEM co-registration, cut/fill volumes and stockpile volumes. Guide:
+[Elevation change and volumes](elevation.md).
+
+- DEMs are 2-D arrays (a `(1, rows, cols)` stack is accepted). NaN, ±inf, masked
+  entries and `nodata` are invalid: NaN in every output and never counted in volumes.
+- **Elevations are in metres**; volumes are in m³ and areas in m².
+- Change is `after - before`: positive is fill (deposition), negative is cut (erosion).
+- `meta` is a rasterio metadata dict (with `crs` and `transform`), an open dataset, an
+  `affine.Affine` (assumed metres), a pixel size in metres or an `(xres, yres)` pair.
+  Horizontal units of projected CRSs are converted to metres (e.g. US survey feet).
+  **Geographic CRSs, metadata without a CRS and GCP-only metadata raise `ValueError`.**
+- Inputs are never modified, and no `RuntimeWarning` is emitted.
+
+### Terrain derivatives
+
+```text
+slope(dem, meta, *, units="degrees", nodata=None) -> ndarray
+aspect(dem, meta, *, nodata=None) -> ndarray
+hillshade(dem, meta, *, azimuth=315.0, altitude=45.0, z_factor=1.0, nodata=None)
+    -> ndarray
+```
+
+Central differences with the true pixel spacing (including rotated or non-square
+pixels), one-sided at edges and next to nodata. `slope` units are `"degrees"`,
+`"radians"` or `"percent"`. `aspect` is in degrees clockwise from grid north in
+`[0, 360)` (NaN on flat pixels). `hillshade` returns illumination in `[0, 1]`.
+
+### Co-registration
+
+```text
+vertical_offset(before_dem, after_dem, *, stable_mask=None, method="median", nodata=None,
+                min_pixels=100) -> VerticalOffset
+coregister_dem(reference_dem, dem, meta, *, stable_mask=None, nodata=None,
+               max_iterations=10, tolerance=0.01, min_slope=2.0, max_slope=70.0)
+    -> DEMCoregistration
+shift_dem(dem, meta, dx, dy, dz=0.0, *, nodata=None) -> ndarray
+```
+
+- `vertical_offset` returns `VerticalOffset(offset, nmad)`, a `NamedTuple`: the vertical
+  bias of `after_dem` over stable ground (subtract it from `after_dem`) and the NMAD of
+  the differences. `method` is `"median"` or `"nmad_trimmed"` (drop differences beyond
+  3 NMAD, then average). Fewer than `min_pixels` stable pixels raise `ValueError`.
+- `coregister_dem` implements Nuth & Kääb (2011): it fits the horizontal shift from
+  `dh / tan(slope)` against aspect on stable terrain between `min_slope` and
+  `max_slope` degrees, iterates until the update is below `tolerance` pixels, then takes
+  the median vertical bias. It models a **translation only**, and raises `ValueError`
+  when the terrain is flat or planar. It warns if it did not converge.
+- `DEMCoregistration` (frozen dataclass): `dx`, `dy`, `dz` (metres east, north, up of
+  `dem` relative to the reference), `dem` (the co-registered DEM on the reference grid),
+  `iterations`, `converged`, `nmad_before`, `nmad_after`, `n_pixels`.
+- `shift_dem` removes a known offset (bilinear resampling), for example one estimated on
+  a crop.
+
+### DEM of difference and level of detection
+
+```text
+elevation_change(before_dem, after_dem, *, nodata=None) -> ndarray
+level_of_detection(sigma_before, sigma_after=None, *, confidence=0.95) -> float | ndarray
+significant_change(dod, lod) -> ndarray
+```
+
+- `elevation_change` returns `after - before` (`float32` unless an input is `float64` or
+  a wide integer), NaN where either DEM is invalid.
+- `level_of_detection` is `t · sqrt(σ_before² + σ_after²)`, with `t` the two-sided
+  normal quantile (1.96 at 95 %). `sigma_after` defaults to `sigma_before`; pass
+  `sigma_after=0` when `sigma_before` is already the error of the difference. Sigmas can
+  be per-pixel arrays.
+- `significant_change` returns a float copy of `dod` with `|dh| <= lod` set to 0, NaN
+  where `dod` or `lod` is NaN.
+
+### Volumes
+
+```text
+volume_change(dod, meta, *, lod=None, mask=None, sigma=None, correlation_length=None)
+    -> VolumeResult
+stockpile_volume(dem, mask, meta, *, base="plane", ring_width=1, nodata=None, sigma=None,
+                 correlation_length=None) -> StockpileResult
+```
+
+- `volume_change` sums `fill = A · Σ dh` over `dh > lod` and `cut = A · Σ |dh|` over
+  `dh < -lod` (every non-zero change without `lod`), inside the optional `mask`. A
+  number for `meta` is the pixel side in metres.
+- `sigma` (one-sigma DoD error, scalar or per pixel) adds uncertainties: uncorrelated
+  `σ · A · sqrt(n)`, or with `correlation_length` the spatially correlated estimate of
+  Rolstad et al. (2009). The larger of the two is reported.
+- `VolumeResult` (frozen dataclass, plain Python numbers): `cut_m3`, `fill_m3` (both
+  positive), `net_m3` (`fill - cut`), `cut_area_m2`, `fill_area_m2`,
+  `unchanged_area_m2`, `valid_area_m2`, `nodata_area_m2` (check it: gaps are left out
+  of the volumes), `pixel_area_m2`, and `cut_uncertainty_m3`, `fill_uncertainty_m3`,
+  `uncertainty_m3` (`None` without `sigma`). `.to_dict()` gives a standard-JSON dict
+  (NaN and ±inf become `None`).
+- `stockpile_volume` measures a pile from one survey. The base surface is fitted to the
+  toe ring (valid pixels within `ring_width` pixels outside the footprint `mask`).
+  `base` is `"plane"` (least-squares plane, default), `"lowest"`, `"mean"`, a fixed
+  elevation, or an array on the same grid (e.g. a survey of the empty pad).
+- `StockpileResult` (frozen dataclass): `volume_m3`, `below_base_m3`, `net_m3`,
+  `area_m2`, `max_height_m`, `base` (`"plane"`, `"lowest"`, `"mean"`, `"surface"` for
+  an array, or the number), `base_elevation_m`, `base_slope_deg`, `base_rmse_m` (misfit
+  of the toe ring; large means the base is uncertain), `missing_area_m2`,
+  `uncertainty_m3`, and `.to_dict()` (NaN, e.g. `base_rmse_m` of a fixed base, becomes
+  `None`).
+
+---
+
+## farq.tiling
+
+Out-of-core processing: inputs are read block by block from disk and results are
+written block by block, so memory depends on the block size, not on the raster size.
+Guide: [Processing rasters larger than memory](tiling.md).
+
+- **All inputs of one call must be on one grid** (CRS, transform and size), otherwise
+  `ValueError`. Align them first (`align_pair`, `align` or `gdalwarp`).
+- Inputs are read like `read(path, masked=True)`: nodata, alpha bands and internal masks
+  become NaN, and integers become `float32` (`float64` for 32/64-bit).
+- Outputs are tiled (256 × 256), deflate-compressed GeoTIFFs (BigTIFF when needed) on
+  the input grid, written **atomically**. Extra keyword arguments or `profile=` override
+  the creation options.
+- `block_size` (int or `(rows, cols)`, default 1024) is rounded down to a multiple of the
+  input's internal tile size. `n_jobs` threads (`-1` for all CPUs) process blocks in
+  parallel; results do not depend on `n_jobs`. `progress(done, total)` is called after
+  each block.
+
+### `detect_changes_file`
+
+```text
+detect_changes_file(before_path, after_path, out_path, *, method="difference",
+                    threshold="otsu", k=2.0, percentile=95.0, min_size=0, connectivity=8,
+                    fill_holes=False, bands=1, sample_size=1000000, seed=0,
+                    magnitude_path=None, pixel_size=None, block_size=1024, n_jobs=1,
+                    progress=None, profile=None) -> dict
+```
+
+The out-of-core `detect_changes`. `method` is `"difference"`, `"ratio"`,
+`"normalized_difference"` or `"cva"` (use `bands=[...]` or `bands=None`); `"pca"` and
+`"irmad"` need whole-image statistics and raise `ValueError`.
+
+- A threshold rule is applied globally, estimated from a reproducible random sample of
+  `sample_size` valid pixels (`seed`; `None` uses every valid pixel). With a numeric
+  threshold, or when the sample covers every valid pixel, the mask equals
+  `detect_changes` on the full arrays, pixel for pixel.
+- `min_size` and `fill_holes` are exact across block borders.
+- `out_path` is a `uint8` mask: 1 = change, 0 = no change, 255 (`CHANGE_NODATA`, the
+  nodata value) where either date is invalid. `magnitude_path` also writes the float
+  magnitude.
+- Returns a JSON-serializable dict: `method`, `threshold`, `threshold_method`,
+  `threshold_exact`, `sampled_pixels`, `total_pixels`, `valid_pixels`,
+  `nodata_pixels`, `changed_pixels`, `changed_percent`, `pixel_area_m2`,
+  `changed_area_m2`, `changed_area_km2`. Areas come from the geotransform or
+  `pixel_size` (as in `change_summary`) and are `None` without one. A geographic CRS
+  raises `ValueError` before any processing unless `pixel_size` is given in metres.
+
+### `index_file`
+
+```text
+index_file(index_name, band_paths, out_path, *, block_size=1024, n_jobs=1, progress=None,
+           dtype=None, profile=None, **kwargs) -> dict
+```
+
+Computes any farq index (`"ndvi"`, `"ndwi"`, `"mndwi"`, `"evi"`, `"savi"`, `"ndbi"`,
+`"nbr"`, `"ndmi"`, `"vari"`, `"exg"`, `"exr"`, `"exgr"`, `"gli"`, `"ngrdi"`, `"tgi"`)
+file to file. `band_paths` maps band names (`"blue"`, `"green"`, `"red"`, `"nir"`,
+`"swir1"`, `"swir2"`) to a path (band 1) or a `(path, band)` pair. `**kwargs` go to the
+index function (e.g. `clip=False`, `reflectance_scale=10000`). The output is float with
+NaN nodata and equals the in-memory index. Returns the output metadata.
+
+### `map_blocks`
+
+```text
+map_blocks(func, inputs, out_path, *, bands=1, block_size=1024, overlap=0, dtype=None,
+           nodata=<NaN for float output>, masked=True, n_jobs=1, progress=None,
+           **profile) -> dict
+```
+
+- Calls `func(*arrays)` with the same window of each input and writes the result, which
+  must be `(rows, cols)` or `(bands, rows, cols)` with the spatial shape of the inputs
+  and the same band count for every block. `bool` results are written as `uint8`.
+- `inputs` is a sequence of paths or `(path, bands)` pairs (a single path is accepted).
+  `bands` is an int (2-D arrays), a sequence, or `None` for all bands (3-D arrays).
+- `overlap` adds a halo of that many pixels around each block. With a halo at least the
+  radius of a neighbourhood operation, the result equals the full-raster one.
+- `dtype` defaults to the dtype of the first result. `nodata` defaults to NaN for float
+  output and none for integer output; writing NaN to an integer dtype requires a
+  `nodata` value. `masked=False` passes raw values.
+- `func` must be thread-safe when `n_jobs > 1`.
+- Returns the output metadata (`driver`, `dtype`, `nodata`, `width`, `height`, `count`,
+  `crs`, `transform`), usable with `write`. Raises `FileNotFoundError`, `IndexError`,
+  `ValueError` or `TypeError`.
+
+### `summarize_file`
+
+```text
+summarize_file(path, band=1, *, bins=50, masked=True, block_size=1024, n_jobs=1,
+               progress=None) -> dict | list[dict]
+```
+
+Streaming statistics: a dict for an int `band`, otherwise a list with one dict per band
+(`None` = all bands). Keys: `band`, `shape`, `size`, `valid`, `nan`, `inf`, `min`, `max`,
+`range`, `mean`, `std` (population), `variance`, `sum`, `percentages` and `histogram`
+(`counts`, `bin_edges`; omitted with `bins=None`, which also skips the second pass). Mean
+and variance agree with `stats` to rounding; counts, extremes and the histogram are
+exact. Percentiles and the median are not computed.
+
+### `iter_windows` and `Block`
+
+```text
+iter_windows(width, height, block_size=1024, overlap=0, *, align_to=None)
+    -> Iterator[Block]
+```
+
+Splits a raster into blocks in row-major order. `align_to` is the file's internal block
+shape (e.g. `dataset.block_shapes[0]`). Each `Block` is a `NamedTuple`:
+
+- `number`: position in row-major order (0, 1, 2, ...)
+- `read_window`: the block plus up to `overlap` pixels on each side, clipped to the raster
+- `write_window`: the part this block is responsible for (the write windows tile the
+  raster exactly)
+- `inner`: `(row_slice, col_slice)` selecting the `write_window` part of an array read
+  with `read_window`
+
+---
+
+## farq.vector
+
+Polygonize change masks and class maps, and export them to GIS formats. Guide:
+[Vector export](vector.md).
+
+- GeoJSON needs no extra dependency. GeoPackage, Shapefile and FlatGeobuf need pyogrio
+  (preferred) or fiona: `pip install "farq[vector]"` installs pyogrio and shapely.
+- NaN, ±inf, `nodata` and masked entries never become polygons. Boolean masks give
+  polygons for `True` only.
+- Polygons follow pixel edges. Areas and perimeters are in CRS units (metres for UTM).
+  **Rasters in a geographic CRS, and rasters without a geotransform (identity transform
+  without a CRS, or GCP-only), raise `ValueError`.**
+
+### `polygonize`
+
+```text
+polygonize(data, meta, *, valid=None, connectivity=4, values=None, min_area=None,
+           simplify=None, preserve_topology=False, labels=None, nodata=None) -> list[dict]
+```
+
+- `data` is a 2-D (or `(1, rows, cols)`) boolean mask or numeric class map. `meta` is a
+  rasterio metadata dict, an open dataset or an `affine.Affine` (units assumed metres).
+- `values` keeps only some values. `labels` names them (e.g. `CHANGE_LABELS`); boolean
+  masks are labelled `"changed"` and other unlabelled values `str(value)`.
+- `connectivity=4` (default) gives OGC-valid polygons. With `8`, diagonal neighbours
+  join one polygon whose ring touches itself (invalid by OGC rules).
+- `min_area` drops polygons smaller than that area (m²). `simplify` is a
+  Douglas–Peucker tolerance in CRS units, applied per ring (neighbouring polygons can
+  develop gaps or overlaps). `preserve_topology=True` simplifies all polygons together
+  with `shapely.coverage_simplify` (needs `shapely>=2.1` and `connectivity=4`).
+- Returns GeoJSON-like features (`type`, `id`, `geometry`, `properties`) in the raster
+  CRS. Properties: `value`, `label`, `pixel_count`, `area_m2`
+  (`pixel_count` × pixel area), `perimeter_m` (pixel-edge length, holes included),
+  `centroid_x`, `centroid_y`. They describe the pixel region before simplification.
+
+### `to_geojson` and `write_vector`
+
+```text
+to_geojson(features, path=None, *, crs=None, to_wgs84=True, precision=None) -> dict
+write_vector(features, path, *, crs, driver=None, layer=None, to_wgs84=None, engine=None)
+    -> None
+```
+
+- `to_geojson` returns a `FeatureCollection` and, with `path`, writes it atomically as
+  UTF-8. Coordinates are reprojected to WGS 84 lon/lat (RFC 7946) by default, so `crs`
+  is required (a `CRS`, EPSG code, string, WKT or rasterio metadata).
+  `to_wgs84=False` keeps the input coordinates and records the CRS in the legacy `"crs"`
+  member. `precision` rounds coordinates. Rings follow the right-hand rule, and NaN
+  property values become `null`.
+- `write_vector` writes GeoJSON, GeoPackage, Shapefile or FlatGeobuf; `driver` is
+  inferred from the extension (`.geojson`/`.json`, `.gpkg`, `.shp`, `.fgb`). `to_wgs84`
+  defaults to `True` for GeoJSON only. An existing file is replaced as a whole, through
+  a temporary file. Shapefile field names are shortened (`perim_m`, `pixels`,
+  `mean_mag`, `max_mag`). `engine` is `"pyogrio"` or `"fiona"` (default: pyogrio if
+  installed). Raises `ImportError` for a non-GeoJSON format without either library.
+
+### `changes_to_vector`
+
+```text
+changes_to_vector(change, meta, path=None, *, values=None, labels=None, nodata=None,
+                  valid=None, min_area=None, connectivity=4, simplify=None,
+                  preserve_topology=False, driver=None, layer=None, to_wgs84=None,
+                  engine=None) -> list[dict]
+```
+
+Polygonizes change-detection output and, with `path`, writes it (format from the
+extension). `change` is:
+
+- a `ChangeResult`: polygons of its `mask`, with `mean_magnitude` and `max_magnitude`
+- a boolean mask: polygons labelled `"changed"`
+- a class map from `classify_change` (also read back from a file): by default the
+  `GAINED` and `LOST` regions, labelled with `CHANGE_LABELS`, with `CHANGE_NODATA`
+  excluded
+
+Returns the features in the raster CRS.
 
 ---
 
@@ -765,4 +1294,4 @@ For compatibility with farq 0.1, these names are also available:
 - `farq.Resampling`: `rasterio.enums.Resampling`
 - `farq.os`: the `os` module
 
-`farq.__version__` is `"0.2.0"`.
+`farq.__version__` is `"0.3.0"`.

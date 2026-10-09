@@ -42,4 +42,4 @@ def test_unknown_attribute():
 
 
 def test_version():
-    assert farq.__version__ == "0.2.0"
+    assert farq.__version__ == "0.3.0"

@@ -4,6 +4,131 @@ All notable changes to Farq are documented in this file. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [semantic versioning](https://semver.org/).
 
+## [0.3.0]
+
+Farq 0.3.0 adds five modules that cover the steps around change detection: cloud
+masking, radiometric normalization, elevation change and volumes, out-of-core processing
+of large rasters, and export of change polygons to GIS formats. Every new public name is
+available at the top level (`farq.<name>`) as well as from its submodule. One change can
+break existing code: `change_summary` now refuses geographic CRSs (see *Changed*).
+
+### Added
+
+- **`farq.masking`**, cloud, shadow and quality masks from satellite quality bands
+  ([guide](docs/masking.md)):
+  - `landsat_qa_mask` and `decode_landsat_qa` (Landsat 4-9 Collection 2 `QA_PIXEL`,
+    with `min_confidence=`), `landsat_radsat_mask` (`QA_RADSAT`, OLI, TM and ETM+).
+  - `sentinel2_scl_mask` (L2A Scene Classification, classes by code, `SCLClass` member
+    or name), `sentinel2_cloud_probability_mask` (`MSK_CLDPRB`), and `target_shape=` /
+    `upsample_mask` to apply 20 m masks to 10 m bands exactly.
+  - `hls_fmask_mask` (HLS v2.0 `Fmask`, including the aerosol level).
+  - `buffer_mask` (by pixels or by ground distance, exact Euclidean),
+    `combine_masks`, `apply_mask`, `clear_fraction`, `valid_overlap` (`MaskOverlap`)
+    and `decode_bits`.
+  - `landsat_c2_scale` and `sentinel2_l2a_scale` (with the processing baseline 04.00
+    `BOA_ADD_OFFSET`).
+  - Constants `LandsatQA`, `Confidence`, `SCLClass`, `SCL_NAMES`,
+    `DEFAULT_S2_BAD_CLASSES` and `HLSFmask`.
+- **`farq.radiometry`**, relative radiometric normalization between dates or flights
+  ([guide](docs/radiometry.md)):
+  - `histogram_match` (exact quantile mapping, or `n_quantiles=`).
+  - `linear_normalize` (OLS, orthogonal, Theil–Sen or mean/std regression on a known
+    no-change mask) and `pif_normalize` (pseudo-invariant pixels selected by IR-MAD,
+    PCA or a percentile rule), both returning `NormalizationResult` with gains, offsets,
+    `r2`, `rmse`, the fit pixels and `.apply()` to reuse a fit on another image.
+  - `irmad` (`IRMADResult`: MAD variates, chi-square statistic, no-change probability,
+    canonical correlations) and `irmad_change` (mask at a false-alarm rate `alpha`).
+- **`farq.elevation`**, elevation change and volumes from DEMs and DSMs
+  ([guide](docs/elevation.md)):
+  - `slope`, `aspect` and `hillshade` using the pixel spacing of the geotransform.
+  - `vertical_offset` (`VerticalOffset`), `coregister_dem` (Nuth & Kääb 2011,
+    `DEMCoregistration`) and `shift_dem`.
+  - `elevation_change`, `level_of_detection` and `significant_change`.
+  - `volume_change` (`VolumeResult`: cut, fill and net volumes and areas, with
+    uncorrelated or spatially correlated uncertainty after Rolstad et al. 2009) and
+    `stockpile_volume` (`StockpileResult`: volume above a base fitted to the toe ring,
+    a fixed elevation or an earlier surface).
+- **`farq.tiling`**, out-of-core processing of rasters larger than memory
+  ([guide](docs/tiling.md)):
+  - `detect_changes_file`: `detect_changes` file to file, with a global threshold from
+    a reproducible pixel sample and `min_size` / `fill_holes` exact across block borders.
+  - `index_file` (any farq index), `map_blocks` (any NumPy function, with an overlap
+    halo for neighbourhood operations), `summarize_file` (streaming statistics and an
+    exact histogram), and `iter_windows` / `Block`.
+  - Tiled, compressed outputs written atomically, `n_jobs=` threads with results that
+    do not depend on `n_jobs` or (except where documented) on `block_size`, and
+    `progress=` callbacks.
+- **`farq.vector`**, change polygons for GIS ([guide](docs/vector.md)):
+  - `polygonize`: masks and class maps to GeoJSON-like features with `pixel_count`,
+    `area_m2`, `perimeter_m` and centroid, optional `min_area`, simplification and
+    topology-preserving simplification.
+  - `to_geojson` (RFC 7946, WGS 84 by default, no extra dependency) and
+    `write_vector` (GeoJSON, GeoPackage, Shapefile, FlatGeobuf).
+  - `changes_to_vector`: one call for a `ChangeResult`, a boolean mask or a
+    `classify_change` class map.
+- **`detect_changes(method="irmad")`** and **`detect_changes(normalize=...)`**; see
+  *Changed*.
+- **Optional extra `vector`**: `pip install "farq[vector]"` installs pyogrio and shapely
+  for GeoPackage, Shapefile and FlatGeobuf output and topology-preserving
+  simplification. GeoJSON needs nothing extra.
+- **Documentation**: guides for [masking](docs/masking.md),
+  [radiometry](docs/radiometry.md), [elevation](docs/elevation.md),
+  [tiling](docs/tiling.md) and [vector export](docs/vector.md); the API reference,
+  README and getting-started page cover the new modules.
+
+### Changed
+
+- **Areas are true m² for CRSs in feet.** `change_summary`, `ChangeResult.summary`,
+  `TransitionMatrix.areas`, `detect_changes_file` and `farq.vector` (`area_m2`,
+  `perimeter_m`, `min_area`) convert from the CRS's linear unit (e.g. EPSG:2263, US
+  survey feet) when areas come from raster metadata, matching `farq.elevation`. Results
+  for metre-based CRSs and plain pixel sizes are unchanged.
+- **`farq.tiling.Block.index` is named `Block.number`** so it no longer shadows
+  `tuple.index`.
+
+- **`detect_changes` has two new keyword arguments.** Existing calls are unaffected.
+  - `method="irmad"` uses the calibrated IR-MAD chi-square statistic as the magnitude.
+    It is insensitive to per-band gain and offset differences between the dates, and it
+    is thresholded at the false-alarm rate `alpha` (new, default 0.01) instead of
+    `threshold`. Passing `threshold` together with `method="irmad"` raises `ValueError`.
+    `ChangeResult.threshold` holds the chi-square quantile that was applied.
+  - `normalize="pif"` or `normalize="histogram"` normalizes `after` to `before` with
+    `pif_normalize` or `histogram_match` before the magnitude is computed. `"pif"` is
+    recommended: it is fitted on unchanged pixels only. Histogram matching also reshapes
+    the distribution, so it can attenuate real change that covers a noticeable part of
+    the scene.
+- **Breaking: `change_summary` raises `ValueError` for a geographic CRS in any
+  spelling.** Metadata whose CRS is geographic (degrees) is refused whether the CRS is
+  a `CRS` object, a string such as `"EPSG:4326"` or an EPSG code such as `4326`, and
+  so is an invalid CRS. Previously a `CRS` object only gave a warning and a string or
+  code skipped the check, so areas in squared degrees were reported as m². This also
+  applies to `ChangeResult.summary`. *Migration:* reproject to a projected CRS (e.g.
+  `farq.align_pair(..., dst_crs="EPSG:326xx")`) or pass the pixel size in metres.
+- **CI** installs the `vector` extra (`pip install -e ".[test,vector]"`), so the
+  GeoPackage, Shapefile and FlatGeobuf tests run on every platform.
+- The version is `0.3.0`.
+
+### Fixed
+
+- The strict-warnings integration tests failed on Python 3.9-3.11 with rasterio older
+  than 1.4.4, whose `from_origin` triggers a third-party `PendingDeprecationWarning`.
+  Warnings raised by farq itself still fail the tests.
+
+### Notes on the IR-MAD calibration
+
+- In Nielsen's published IR-MAD scheme (2007), the chi-square statistic is computed from
+  the *weighted* MAD variances. Weighting each pixel by its no-change probability
+  shrinks these variances below the true no-change variances, so the statistic is too
+  large: in simulations, the false-alarm rate at `alpha = 0.01` is above 50 %.
+- Farq multiplies the statistic by the exact consistency factor for this weighting
+  (`c_p = 2 I_{1/2}((p + 2) / 2, p / 2)`, the weighted-to-true covariance ratio for
+  Gaussian no-change data with `p` bands), both for the weights and for the output.
+  The `chi2` of unchanged pixels then follows a chi-square distribution with `p`
+  degrees of freedom, and **`alpha` is the false-alarm rate** of `irmad_change` and
+  `detect_changes(method="irmad")` under Gaussian no-change noise.
+- Heavy-tailed no-change differences, such as residual misregistration or moved
+  shadows, still raise the false-alarm rate. Align and co-register the images first.
+
 ## [0.2.0]
 
 Farq 0.2.0 turns the library into a full raster change-detection toolkit for satellite
@@ -258,5 +383,6 @@ upgrading.**
 Initial releases: raster I/O, NDWI/NDVI/EVI/SAVI/NDBI/NBR/NDMI, water statistics,
 basic ML helpers and plotting.
 
+[0.3.0]: https://github.com/ferasqr/farq/releases/tag/v0.3.0
 [0.2.0]: https://github.com/ferasqr/farq/releases/tag/v0.2.0
 [0.1.5.1]: https://pypi.org/project/farq/0.1.5.1/

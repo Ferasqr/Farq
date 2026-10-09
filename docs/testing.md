@@ -8,8 +8,10 @@ cd farq
 pip install -e ".[dev]"     # farq + pytest, pytest-cov, psutil, ruff, mypy, build, twine
 ```
 
-The `test` extra (`pip install -e ".[test]"`) installs only the test dependencies. All
-tool configuration lives in `pyproject.toml`.
+The `test` extra (`pip install -e ".[test]"`) installs only the test dependencies. The
+vector-export tests for GeoPackage, Shapefile, FlatGeobuf and topology-preserving
+simplification are skipped without the `vector` extra (pyogrio and shapely), so use
+`pip install -e ".[dev,vector]"` to run the whole suite. All tool configuration lives in `pyproject.toml`.
 
 ## Running the tests
 
@@ -85,8 +87,8 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on pushes to `main` and on pull
 requests:
 
 - **lint**: `ruff check` and `ruff format --check`
-- **test**: `pytest -m "not performance"` with coverage on Python 3.9-3.13 (Ubuntu), plus
-  Python 3.12 on macOS and Windows
+- **test**: installs `.[test,vector]` and runs `pytest -m "not performance"` with
+  coverage on Python 3.9-3.13 (Ubuntu), plus Python 3.12 on macOS and Windows
 - **build**: `python -m build` and `twine check --strict`
 
 Publishing a GitHub release triggers `.github/workflows/publish.yml`, which builds the
